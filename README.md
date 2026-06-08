@@ -40,42 +40,7 @@ Multi-core SoC generation involves many repetitive, error-prone artefacts: bus a
 
 ### 3.0 System Overview
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│  User Input                                                           │
-│  • Natural-language intent   OR   • mosaic.yaml (direct)              │
-└───────────────────────────┬───────────────────────────────────────────┘
-                            │
-          ┌─────────────────▼──────────────────┐
-          │        Agentic Harness             │  ← Phase 2 (Track D)
-          │  config-author · flow-runner       │
-          │  drc-triage  · doc-gen             │
-          │  (every action gated by determin-  │
-          │   istic schema / log checks)       │
-          └─────────────────┬──────────────────┘
-                            │
-          ┌─────────────────▼──────────────────┐
-          │       MOSAIC-SoC Generator         │  ← Phase 1 (core focus)
-          │  • Validates mosaic.yaml           │
-          │  • Selects & wraps IP from library │
-          │  • Emits parameterised RTL + SDC   │
-          │  • Builds memory map & Librelane   │
-          │    flow config                     │
-          └─────────────────┬──────────────────┘
-                            │
-          ┌─────────────────▼──────────────────┐
-          │   Open-Source EDA (Librelane)      │
-          │   Synth → P&R → DRC/LVS → GDSII   │
-          └─────────────────┬──────────────────┘
-                            │
-          ┌─────────────────▼──────────────────┐
-          │   Outputs                          │
-          │   DRC/LVS-clean GDSII + reports    │
-          │   Reproducibility artefacts        │
-          └────────────────────────────────────┘
-                            │ (violations feed back)
-                            └──────────────────────→ drc-triage → re-run
-```
+![Our Initial Architecture](docs/architecture.jpg)
 
 ### 3.1 Phase 1 : Multi-Core SoC Generator
 
