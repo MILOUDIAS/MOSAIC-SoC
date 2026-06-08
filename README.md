@@ -17,8 +17,7 @@ run the RTL-to-GDSII flow, and triage failures (lint, synthesis, DRC/LVS).
 
 The project directly targets **Track D – AI/LLM for Circuits**: it uses LLM agents as a
 practical, measurable aid to digital hardware generation, not as a gimmick. The headline
-deliverable is a **reproducible, DRC/LVS-clean single-core SoC** generated from config,
-with multi-core generation and a fuller agent skill set as stretch goals.
+deliverable is a **reproducible, DRC/LVS-clean single-core or multi-core SoC** generated from config.
 
 ---
 
@@ -47,33 +46,6 @@ the project's contribution (Phase 2 and Phase 1), wrapped around the standard op
 flow. A signoff feedback loop returns DRC/LVS results to the harness so the agent can
 triage and regenerate — closing the agentic cycle.
 
-```
-            ┌─────────────────┐   ┌─────────────────┐
-  Inputs    │   User intent   │   │  Config (YAML)  │
-            └────────┬────────┘   └────────┬────────┘
-                     └───────────┬──────────┘
-                                 v
-  Phase 2          ╔═════════════════════════════╗
-  (agentic)        ║       AGENTIC HARNESS        ║ <──────────┐
-                   ║   LLM orchestrator + skills  ║            │
-                   ╚══════════════╤══════════════╝            │
-                                  v                            │
-  Phase 1          ╔═════════════════════════════╗            │
-  (generator)      ║        SoC GENERATOR         ║            │
-                   ║  config parser · IP lib · RTL║            │
-                   ╚══════════════╤══════════════╝            │
-                                  v                            │
-  Build it         ┌─────────────────────────────┐            │
-                   │     Open-source EDA flow     │  DRC/LVS   │
-                   │   synthesis · P&R · signoff  ├── loop ────┘
-                   └──────────────┬──────────────┘
-                                  v
-  Test + publish   ┌─────────────────────────────┐
-                   │     Tapeout-ready GDSII      │
-                   │    DRC/LVS clean + reports   │
-                   └─────────────────────────────┘
-```
-
 ![Our Initinal Architecture](docs/init_arch_by_phase.svg)
 
 **Layer responsibilities**
@@ -82,8 +54,8 @@ triage and regenerate — closing the agentic cycle.
 - **Agentic harness (Phase 2)** — an LLM orchestrator with scoped skills (`config-author`,
   `flow-runner`, `drc-triage`, `doc-gen`); every action is gated by a deterministic check.
 - **SoC generator (Phase 1)** — validates the config and elaborates parameterized RTL from a
-  small IP library, plus the flow configuration.
-- **Open-source EDA flow** — Yosys/OpenROAD-class RTL-to-GDSII (synthesis, place & route, signoff).
+  small IP library from the vast open-source ecosystem, plus the flow configuration.
+- **Open-source EDA flow** — Librelane RTL-to-GDSII (synthesis, place & route, signoff).
 - **Outputs** — a DRC/LVS-clean, tapeout-ready GDSII with reproducible run reports.
 - **Feedback loop** — signoff results return to the harness; `drc-triage` proposes fixes and
   the generator re-runs. This loop is the core measurable claim of the project.
@@ -99,12 +71,15 @@ soc:
   cores:
     - ip: ibex             # open-source core from the IP library (see §3.3)
       isa: rv32imc
-      count: 1             # MVP = 1; multi-core is a stretch goal
+      count: 2             # can be any number
+    - ip: serv
+      isa: rvec
+      count: 4
   memory:
     sram_kb: 8
   bus: wishbone            # or obi — see §3.3
   peripherals: [uart, gpio, timer]
-  pdk: gf180mcu            # [TBD] confirm target PDK for Track D
+  pdk: gf180mcu            # Chipathon pdk 
 ```
 
 The generator (Python) parses this into: parameterized RTL (elaborated from a small IP
@@ -113,7 +88,7 @@ OpenROAD).
 
 ### 3.2 Phase 2 — Agentic harness
 
-An LLM-driven harness with a set of well-scoped **skills**:
+An LLM-driven harness with a set of well-scoped **skills**, also there is many open-source harnessess we can base our work on:
 
 | Skill | What the agent does | How we verify it helped |
 | -- | -- | -- |
@@ -142,30 +117,26 @@ catalog; reconfigurability extends down to the core itself (e.g. FazyRV's datapa
 | FazyRV | scalable RV32I | 1/2/4/8-bit datapath at synthesis — pairs perfectly with config-driven generation |
 | PicoRV32 | small RV32 | simple, well-proven, fast bring-up |
 | Ibex | RV32IMC, 2-stage | industrial-grade; strong MVP candidate |
-| CVA6 | application-class RV64 | Linux-capable; multi-core / stretch target |
+| CVA6 | application-class RV64 | Linux-capable; multi-core |
+| ... | any class | Linux-capable; multi-core / stretch target |
 
-**Buses / interconnect:** Wishbone, OBI (Open Bus Interface); APB / AXI-lite optional for peripherals.
+**Buses / interconnect:** Wishbone, OBI (Open Bus Interface); APB / AXI-lite optional for peripherals or Open source NoC.
 
 **Peripherals:** UART, GPIO, timer, SPI, I2C (open-source RTL).
-
-> Core choice drives feasibility. SERV / FazyRV / PicoRV32 / Ibex are realistic for a
-> GF180MCU MVP; CVA6 (RV64, Linux-class) is a stretch / multi-core ambition, not a
-> first-cycle target. Pin the exact IP repos and commit hashes for reproducibility.
-
 ---
 
 ## 4. Scope: MVP vs. Stretch Goals
 
 Scoping is deliberate so there is always a demonstrable, tapeout-ready result.
 
-**MVP (committed):**
-- Config-driven generation of a **single small RISC-V core SoC** (core + SRAM + UART + GPIO).
+**Proof of Concept (committed):**
+- Config-driven generation of a **small RISC-V cores SoC** (serv core + FazyRV 8-bit variant + 4 SRAMs + UART + GPIO).
 - Full RTL-to-GDSII in open-source EDA with **clean DRC and LVS**.
 - Agent skills `config-author` + `flow-runner` working end-to-end.
 - Reproducible repo: one command regenerates the design from config.
 
 **Stretch goals:**
-- **Multi-core** generation (2+ cores + interconnect + shared memory).
+- **Generic Multi-core** generation (any 2+ cores + interconnect + shared memory).
 - `drc-triage` and `doc-gen` agent skills.
 - A measurement study comparing agent-assisted vs. manual iteration effort.
 
@@ -195,7 +166,7 @@ Scoping is deliberate so there is always a demonstrable, tapeout-ready result.
 ## 7. Tools & Technology
 
 - **EDA flow:** open-source RTL-to-GDSII — `Librelane` .
-- **PDK:**  confirm Track D target (GF180MCU expected).
+- **PDK:** GF180MCU expected.
 - **Environment:** IIC-OSIC-TOOLS container for reproducibility.
 - **Cores/IP:** open-source RISC-V cores — SERV, FazyRV, PicoRV32, Ibex, CVA6, and any other Open-Source Core through a wrapper — over Wishbone / OBI /NoC, with open peripherals (UART, GPIO, timer, SPI, I2C). See §3.3.
 - **Agent stack:** LLM + harness framework + tool-calling interface, probably based on Pi harness or OpenCode.
@@ -209,8 +180,8 @@ Scoping is deliberate so there is always a demonstrable, tapeout-ready result.
 | Phase | Window | Milestone |
 | -- | -- | -- |
 | Setup | Phase 1 | Tools/PDK installed; config schema v0; minimal RTL generated |
-| Build | Phase 2 | MVP single-core SoC through full flow; `config-author` + `flow-runner` skills |
-| Review | Phase 3 | Interim design review; DRC/LVS clean MVP; begin stretch goals |
+| Build | Phase 2 | Simple multi-core SoC through full flow; `config-author` + `flow-runner` skills |
+| Review | Phase 3 | Interim design review; DRC/LVS clean; begin more complex tasks |
 | Signoff | Phase 4 | Tapeout-ready database; measurement study; final report + slides |
 
 ---
@@ -219,10 +190,9 @@ Scoping is deliberate so there is always a demonstrable, tapeout-ready result.
 
 | Risk | Mitigation |
 | -- | -- |
-| Multi-core + tapeout too ambitious for the cycle | MVP is a simple prototype; multi-core is an explicit stretch goal |
+| Multi-core + tapeout too ambitious for the cycle | we start with simple prototype; Generic multi-core is an explicit stretch goal |
 | Agent unreliable / hallucinates flow steps | Every agent action gated by deterministic checks; agent is optional over a working manual path |
 | Flow/PDK setup delays | Start with IIC-OSIC-TOOLS container day one; use a known-good example design as baseline |
-| Solo bandwidth | Scope locked to MVP; recruit 1–2 collaborators if possible |
 
 ---
 
@@ -233,8 +203,8 @@ Scoping is deliberate so there is always a demonstrable, tapeout-ready result.
 
 | Discord | GitHub | Affiliation (experience) | Role (suggested) |
 | -- | -- | -- | -- |
-| @MILOUDIAS | @MILOUDIAS | `PhD Student/ Researcher` | Team Lead —  RTL & SoC integration (Phase 1), EDA flow, physical design & verification |
-| kewenlee | trabdelbasset | `PhD Student/ Researcher` | Team Lead — agentic harness (Phase 2), EDA flow, physical design & verification |
+| MILOUDIAS | MILOUDIAS | `PhD Student/ Researcher` | Team Lead —  RTL & SoC integration (Phase 1), EDA flow, physical design & verification |
+| kewenlee | trabdelbasset | `PhD Student/ Researcher` | agentic harness (Phase 2), EDA flow, physical design & verification |
 | yassinehk | yacine-hk | `PhD Student/ Researcher` | RTL & SoC integration (Phase 1)  EDA flow, physical design & verification |
 
 **Background:** Open-source EDA (Librelane, ORFS, Cocotb...), SoC design, LLM agents.
