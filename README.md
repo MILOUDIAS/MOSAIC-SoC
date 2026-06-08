@@ -233,9 +233,9 @@ Scoping is deliberate so there is always a demonstrable, tapeout-ready result.
 
 | Discord | GitHub | Affiliation (experience) | Role (suggested) |
 | -- | -- | -- | -- |
-| @MILOUDIAS | @MILOUDIAS | `PhD Student/ Researcher` | RTL & SoC integration (Phase 1) |
-| kewenlee | trabdelbasset | `PhD Student/ Researcher` | Team Lead — agentic harness (Phase 2)  |
-| yassinehk | yacine-hk | `PhD Student/ Researcher` | EDA flow, physical design & verification |
+| @MILOUDIAS | @MILOUDIAS | `PhD Student/ Researcher` | Team Lead —  RTL & SoC integration (Phase 1), EDA flow, physical design & verification |
+| kewenlee | trabdelbasset | `PhD Student/ Researcher` | Team Lead — agentic harness (Phase 2), EDA flow, physical design & verification |
+| yassinehk | yacine-hk | `PhD Student/ Researcher` | RTL & SoC integration (Phase 1)  EDA flow, physical design & verification |
 
 **Background:** Open-source EDA (Librelane, ORFS, Cocotb...), SoC design, LLM agents.
 
