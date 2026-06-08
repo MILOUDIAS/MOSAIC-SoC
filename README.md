@@ -74,7 +74,7 @@ triage and regenerate — closing the agentic cycle.
                    └─────────────────────────────┘
 ```
 
-![Our Initinal Architecture](init_arch_by_phase.svg)
+![Our Initinal Architecture](docs/init_arch_by_phase.svg)
 
 **Layer responsibilities**
 
