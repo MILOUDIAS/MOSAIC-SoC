@@ -203,7 +203,7 @@ Three simulation runs using the same firmware but different TDU `SCHED_MODE` set
 
 - DRC + LVS clean against GF180MCU PDK rule deck.
 - STA timing closure at target clock (50 MHz nominal, conservative for this technology).
-- Area report: estimated PoC die core area ≤ 1.5 mm² (dominated by SRAM; compute fabric < 0.3 mm²).
+- Area report: estimated PoC die core area ≤ 1.25 mm².
 
 ### Agent evaluation (Track D metrics)
 
@@ -248,24 +248,24 @@ Pinned tool versions (IIC-OSIC-TOOLS container), fixed random seeds, and a singl
 
 ## 8. Timeline (aligned to Chipathon phases)
 
-| Phase       | Milestone                                                                                                                                                     |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Setup**   | IIC-OSIC-TOOLS environment confirmed; `mosaic.yaml` schema v0 finalised; SCI wrapper for SERV and FazyRV passing riscv-formal                                 |
-| **Build**   | PoC-α RTL complete (7-core cluster); Verilator simulation passing all firmware tests; `config-author` + `flow-runner` skills operational; first Librelane run |
-| **Review**  | DRC/LVS clean on PoC-α; TDU scheduler demonstration in simulation; interim design review submitted; `drc-triage` skill drafted                                |
-| **Signoff** | Tapeout-ready GDSII; STA closure at 50 MHz; agent evaluation metrics collected; final report + slides + reproducibility package                               |
+| Phase       | Milestone                                                                                                                                                      |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Setup**   | IIC-OSIC-TOOLS environment confirmed; `mosaic.yaml` schema v0 finalised; SCI wrapper for SERV and FazyRV passing riscv-formal                                  |
+| **Build**   | PoC-α RTL complete ( BIG.LITTLE SoC); Verilator simulation passing all firmware tests; `config-author` + `flow-runner` skills operational; first Librelane run |
+| **Review**  | DRC/LVS clean on PoC-α; TDU scheduler demonstration in simulation; interim design review submitted; `drc-triage` skill drafted                                 |
+| **Signoff** | Tapeout-ready GDSII; STA closure at 50 MHz; agent evaluation metrics collected; final report + slides + reproducibility package                                |
 
 ---
 
 ## 9. Risks and Mitigation
 
-| Risk                                                   | Likelihood | Mitigation                                                                                                                                        |
-| ------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 7-core cluster too large for first tapeout slot        | Medium     | PoC can be split: 1 TITAN + 2 ATLAS first; NANO cores added in stretch phase. Generator architecture is the deliverable regardless of core count. |
-| Agent hallucinates invalid config or flow steps        | Medium     | Every agent output gated by schema validation and log parsing; manual flow path always available as fallback                                      |
-| GF180MCU SRAM macro unavailable at bring-up            | Low        | Use flip-flop SRAM for Phase 1; swap in OpenRAM macro once characterised                                                                          |
-| OBI crossbar congestion at 7 cores                     | Low        | Conservative 50 MHz target; single shared L1 with banking keeps peak bandwidth manageable for the target workload                                 |
-| FazyRV GF180MCU synthesis not previously characterised | Low        | FazyRV is technology-agnostic RTL; Yosys maps it cleanly; worst case fall back to PicoRV32 for ATLAS tier                                         |
+| Risk                                                   | Likelihood | Mitigation                                                                                                                                                             |
+| ------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| On-Chip Memory too large for first tapeout slot        | Medium     | PoC can be use even smaller cores + use only External Memory. Bigger cores added in stretch phase. Generator architecture is the deliverable regardless of core count. |
+| Agent hallucinates invalid config or flow steps        | Medium     | Every agent output gated by schema validation and log parsing; manual flow path always available as fallback                                                           |
+| GF180MCU SRAM macro unavailable at bring-up            | Low        | Use flip-flop SRAM for Phase 1; swap in OpenRAM macro once characterised                                                                                               |
+| OBI crossbar congestion at +3 cores                    | Low        | Conservative 50 MHz target; single shared L1 with banking keeps peak bandwidth manageable for the target workload                                                      |
+| FazyRV GF180MCU synthesis not previously characterised | Low        | FazyRV is technology-agnostic RTL; Yosys maps it cleanly; worst case fall back to PicoRV32 for ATLAS tier                                                              |
 
 ---
 
