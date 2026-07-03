@@ -1,0 +1,1 @@
+/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SoC/.venv/bin/python: can't open file '/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SoC/util/gen_idma.py': [Errno 2] No such file or directory

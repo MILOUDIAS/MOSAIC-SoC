@@ -1,0 +1,57 @@
+# mosaic_all_cores.yaml — MOSAIC-SoC all-cores generation acceptance test.
+#
+# Instantiates every feasible core type to verify the generator wires each SCI
+# branch: cv32e20 (native), ibex (req/gnt→OBI), fazyrv (Wishbone→OBI),
+# qerv (SERV W=4, unified OBI) and serv (unified OBI).
+#
+# CVA6 is intentionally absent: it is an app-class 64-bit core (~80 kGE + caches)
+# that does not fit the GF180MCU 1.249 mm² PoC budget — out of scope.
+#
+# Run:  make mosaic-gen MOSAIC_CFG=configs/mosaic_all_cores.yaml
+
+soc:
+  name: mosaic_all_cores
+  pdk: gf180mcu
+
+  cores:
+    - ip: cv32e20          # native CVE2 — TITAN orchestrator
+      isa: rv32emc
+      count: 1
+      role: titan
+
+    - ip: ibex             # lowRISC Ibex via req/gnt→OBI SCI wrapper
+      isa: rv32imc
+      count: 1
+      role: atlas
+
+    - ip: fazyrv           # chunk-serial, Wishbone→OBI SCI wrapper
+      isa: rv32i
+      chunksize: 8
+      count: 1
+      role: atlas
+
+    - ip: qerv             # SERV-family W=4, unified-OBI SCI wrapper
+      isa: rv32i
+      count: 1
+      role: nano
+
+    - ip: serv             # bit-serial W=1, unified-OBI SCI wrapper
+      isa: rv32i
+      count: 1
+      role: nano
+
+  memory:
+    sram_kb: 64
+    boot_rom_kb: 2
+
+  bus: obi
+
+  scheduler:
+    tdu: true
+    mode: dynamic
+
+  peripherals:
+    - uart
+    - gpio
+    - timer
+    - spi
