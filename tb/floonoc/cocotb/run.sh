@@ -1,0 +1,34 @@
+#!/bin/bash
+# Build + run the MOSAIC OBI<->AXI bridge cocotb tests (cocotb + Verilator):
+#   stage 1: bridge<->bridge loopback            (TOPLEVEL=tb_bridge_top)
+#   stage 2: loopback through the FlooNoC fabric (TOPLEVEL=tb_noc_top, once generated)
+# Requires cocotb + verilator. No RTL generation needed (bridges are static RTL).
+# Usage: tb/floonoc/cocotb/run.sh [stage2]
+
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/../../.." && pwd)"
+cd "$HERE"
+
+TOPS=(tb_bridge_top)
+MODS=(test_bridges)
+if [ "${1:-}" = "stage2" ]; then
+  TOPS+=(tb_noc_top)
+  MODS+=(test_noc)
+  echo "### generating the FlooNoC fabric (configs/mosaic_floonoc.yaml) ..."
+  ( cd "$REPO"
+    TPLS=$(find . \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
+        -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
+        -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
+    python3 util/xheep_gen/mcu_gen.py --mosaic_config configs/mosaic_floonoc.yaml \
+        --base_config configs/general.hjson --pads_cfg configs/pad_cfg.py \
+        --outtpl "$TPLS" --externaltpl "" >/dev/null ) || { echo "fabric gen failed"; exit 1; }
+fi
+
+rc=0
+for i in "${!TOPS[@]}"; do
+  echo "### ===== bridge cocotb: TOPLEVEL=${TOPS[$i]} ====="
+  rm -rf sim_build results.xml __pycache__
+  make SIM=verilator TOPLEVEL="${TOPS[$i]}" MODULE="${MODS[$i]}" || rc=1
+done
+exit $rc
