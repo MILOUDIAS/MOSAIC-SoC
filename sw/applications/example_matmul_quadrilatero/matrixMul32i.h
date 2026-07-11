@@ -1,0 +1,1 @@
+../../../hw/vendor/pulp_platform/quadrilatero/sw/quadrilatero_matmul/matrixMul32i.h

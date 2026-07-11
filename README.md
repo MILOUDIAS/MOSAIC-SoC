@@ -1,306 +1,513 @@
-# MOSAIC-SoC
+<br />
+<p align="center"><img src="docs/architecture.jpg" width="820"></p>
 
-**Agent-Driven, Reconfigurable Multi-Core SoC Generator using Open-Source EDA**
+<h1 align="center">MOSAIC-SoC</h1>
 
-> Describe a heterogeneous multi-core SoC in one config file.
-> An LLM-driven harness assembles, synthesises, and verifies it , from RTL to tapeout-ready GDSII.
-> Built for the IEEE SSCS Chipathon 2026: _Build It. Test It. Publish It._
+<p align="center">
+  <b>A configuration-driven, multi-core RISC-V SoC generator</b><br>
+  One declarative <code>mosaic.yaml</code> → a synthesizable, tapeout-ready heterogeneous SoC, with entirely open-source EDA.
+</p>
 
----
-
-## 1. Summary
-
-MOSAIC-SoC is a configuration-driven **multi-core SoC generator** that turns a single high-level description into a synthesisable, tapeout-ready heterogeneous System-on-Chip, implemented entirely in open-source EDA. The open-source hardware community has long had individual RISC-V cores of every size , from the world's smallest (SERV, ~200 GE) to Linux-capable application processors (CVA6) , yet no openly available tool makes it straightforward to _compose_ these cores into a coherent multi-core system with shared memory, a bus fabric, and a scheduler. MOSAIC-SoC fills that gap.
-
-On top of the generator we layer an **agentic harness** (Chipathon Track D): an LLM assistant equipped with hardware-specific skills that authors configurations, drives the RTL-to-GDSII flow, and triages DRC/LVS failures , reducing iteration time and lowering the barrier for newcomers to multi-core SoC design.
-
-The headline deliverable is a **tapeout-ready heterogeneous multi-core SoC** generated from a single config, verified with open-source simulation, and submitted to the GF180MCU open PDK.
+<p align="center">
+  IEEE SSCS Chipathon 2026 · Track D (AI/LLM for Circuits) · Target PDK: <b>GF180MCU</b> · Built on <a href="#built-on-x-heep">X-HEEP</a>
+</p>
 
 ---
 
-## 2. Motivation
+## Table of contents
 
-### 2.1 The multi-core gap in open-source hardware
-
-The open RISC-V ecosystem is rich in individual processor cores, but building a _multi-core_ SoC still requires manually: selecting and wrapping each core with a common bus interface, building the interconnect, sizing shared memory, writing a hardware-assisted scheduler, and then driving a complete RTL-to-GDSII flow, a process that takes weeks even for experienced designers. There is no open-source equivalent of what ARM's big.LITTLE and Cortex-M subsystem templates provided to proprietary SoC teams.
-
-### 2.2 The heterogeneous efficiency opportunity
-
-Not all tasks in an embedded system are equal. Sensor polling, signal processing, and OS scheduling span three decades of compute complexity. A single core architecture is always a compromise: either too powerful (wasting static power on lightweight tasks) or too limited (missing burst-compute deadlines). A _tiered_ approach , tiny cores for always-on sensing, little cores for signal conditioning, a big core for orchestration , can yield 4× or more energy savings at matched throughput, as the ARM big.LITTLE architecture demonstrated commercially.
-
-MOSAIC-SoC makes this approach reproducible and accessible in fully open silicon.
-
-### 2.3 The agentic opportunity (Track D)
-
-Multi-core SoC generation involves many repetitive, error-prone artefacts: bus address maps, crossbar parameter files, memory bank configurations, synthesis constraints, and DRC/LVS debug loops. These are exactly the tasks where an LLM harness with well-scoped skills provides measurable value. The hypothesis we test: _does an agent-assisted workflow reduce iteration time and required expertise compared to a fully manual flow?_
+1. [What is MOSAIC-SoC?](#1-what-is-mosaic-soc)
+2. [Architecture](#2-architecture)
+3. [The single config file](#3-the-single-config-file)
+4. [Repository layout](#4-repository-layout)
+5. [Prerequisites](#5-prerequisites)
+6. [Setup](#6-setup)
+7. [Generate the SoC RTL](#7-generate-the-soc-rtl)
+8. [Run the simulations & tests](#8-run-the-simulations--tests)
+9. [RTL → GDSII hardening (GF180MCU)](#9-rtl--gdsii-hardening-gf180mcu)
+10. [Config reference](#10-config-reference)
+11. [Project status](#11-project-status)
+12. [Extending the SoC](#12-extending-the-soc)
+13. [Built on X-HEEP](#built-on-x-heep)
 
 ---
 
-## 3. Architecture
+## 1. What is MOSAIC-SoC?
 
-### 3.0 System Overview
+MOSAIC-SoC turns a **single YAML file** into a complete heterogeneous multi-core RISC-V
+SoC — choosing the cores, their counts, the memory, the bus fabric, the hardware
+scheduler, and the peripherals — and drives that all the way to a **DRC/LVS-clean GDSII**
+on the open-source **GF180MCU** PDK.
 
-![Our Initial Architecture](docs/architecture.jpg)
+It is built on EPFL's [X-HEEP](#built-on-x-heep) single-core MCU, extended into a
+**config-driven multi-core generator**:
 
-### 3.1 Phase 1 : Multi-Core SoC Generator
+- **Heterogeneous "Big.LITTLE" cores** — a **9-core catalog** behind one interface: an
+  application-class core (CVA6, 32-bit — sim-only), industry MCU cores (cv32e20, cv32e40x,
+  Ibex, PicoRV32), a bare RISC-V core (Snitch), and ultra-tiny serial cores (SERV, QERV,
+  FazyRV) — mixed freely in one SoC.
+- **Standard Core Interface (SCI)** — every core is wrapped to a common OBI 1.3 interface,
+  so adding a core is one wrapper + one `.core` descriptor.
+- **Task Dispatch Unit (TDU)** — a tiny (<100 GE) memory-mapped hardware scheduler that
+  wakes dormant worker cores and tracks their activity.
+- **Open EDA only** — Verilator + cocotb for verification, LibreLane (Yosys + OpenROAD +
+  Magic/KLayout/Netgen) for hardening.
 
-A single declarative YAML config fully describes the SoC. The generator validates it, selects IP from the open-source library, elaborates parameterised RTL, and emits the Librelane flow configuration. The key contribution is that **any combination of cores from the catalogue** can be expressed in config , no RTL hand-editing required.
+**Proof-of-concept SoC:** 1× cv32e20 (TITAN) + 2× FazyRV-CHUNK8 (ATLAS) + 4× SERV (NANO),
+32 KB SRAM, 2 KB boot ROM, UART/GPIO/timer/SPI, TDU scheduler, iDMA — in **1.249 mm²** on
+GF180MCU.
+
+---
+
+## 2. Architecture
+
+<p align="center"><img src="docs/init_arch_by_phase.svg" width="900"></p>
+
+### Core taxonomy (Big.LITTLE)
+
+| Tier      | Role            | Cores                                 | Area                     | Purpose                  |
+| --------- | --------------- | ------------------------------------- | ------------------------ | ------------------------ |
+| **TITAN** | orchestrator    | cv32e20 (CVE2), cv32e40x, Ibex, CVA6† | ~14–17 kGE (CVA6 larger) | RTOS / task dispatch     |
+| **ATLAS** | signal/protocol | FazyRV-CHUNK8, PicoRV32, Snitch       | ~1–5 kGE                 | streaming / conditioning |
+| **NANO**  | always-on       | SERV, QERV                            | ~0.2–3 kGE               | sensor polling           |
+
+> † **CVA6** is integrated for **simulation only** (32-bit `cv32a65x`-derived config, single
+> AXI4 master bridged to OBI). It is **excluded from the GF180 tapeout** (area). PicoRV32 and
+> Snitch are sim-verified workers; both are tapeout-eligible.
+
+### Key blocks
+
+- **Standard Core Interface (SCI)** — a thin (~100–200 line) wrapper per core
+  (`hw/sci/<core>_sci.sv`) that presents identical OBI 1.3 instruction + data ports plus a
+  clock-gate/wake handshake. Every native bus is converted to OBI here: Wishbone
+  (SERV/QERV/FazyRV), req/gnt (Ibex), PicoRV32's unified memory port, Snitch's reqrsp
+  channel, and CVA6's AXI4 master (via a burst-capable AXI→OBI bridge).
+- **Task Dispatch Unit (TDU)** — `hw/tdu/`, memory-mapped at `0x200A0000`. An 8-deep task
+  FIFO, per-hart `WAKE_REQ` → `core_wake` pulses, a CPI-estimate array and an energy
+  counter. Worker cores boot **dormant** and are released by a TDU wake.
+- **iDMA** (pulp-platform) — `hw/vendor/mosaic/idma/`, replaces x-heep's simple DMA
+  (register frontend + ND midend + native OBI backend, no protocol conversion).
+- **Bus fabric** — a parameterized OBI N×M crossbar (`pulp-platform/obi`), sized
+  automatically by the generator; banked SRAM with per-bank clock gating.
+
+### How generation works
+
+```
+mosaic.yaml ──> util/xheep_gen/mosaic_config.py ──> XHeep config object
+                                                          │
+                  Mako templates (*.sv.tpl) <─────────────┘
+                          │  rendered by util/xheep_gen/mcu_gen.py
+                          ▼
+                  generated *.sv  ──> FuseSoC (.core files) ──> Verilator / LibreLane
+```
+
+---
+
+## 3. The single config file
+
+Everything is driven by one declarative file. This is the PoC (`mosaic.yaml`):
 
 ```yaml
-# mosaic.yaml — illustrative PoC-α config
 soc:
   name: mosaic_poc_alpha
   pdk: gf180mcu
 
   cores:
-    - ip: ibex # big core — RV32IMC, 2-stage pipeline
-      isa: rv32imc
+    - ip: cv32e20 # TITAN — CVE2, 2-stage, RV32E/M (orchestrator)
+      isa: rv32emc
       count: 1
-      role: titan # orchestrator tier
+      role: titan
 
-    - ip: fazyrv # little cores — scalable 1/2/4/8-bit datapath
+    - ip: fazyrv # ATLAS — chunk-serial datapath
       isa: rv32i
-      chunksize: 8 # configures FazyRV datapath width at synthesis
+      chunksize: 8 # per-core-type parameter
       count: 2
-      role: atlas # signal-processing tier
+      role: atlas
 
-    - ip: serv # tiny cores — bit-serial, ~200 GE each
+    - ip: serv # NANO — bit-serial, ~200 GE each
       isa: rv32i
       count: 4
-      role: nano # always-on sensor polling tier
+      role: nano
 
   memory:
-    sram_kb: 32 # banked; each bank independently clock-gated
+    sram_kb: 32
     boot_rom_kb: 2
 
-  bus: obi # Open Bus Interface — native to Ibex/X-HEEP ecosystem
+  bus: obi # Open Bus Interface
 
   scheduler:
-    tdu: true # Task Dispatch Unit: <100 GE hardware assist
+    tdu: true # Task Dispatch Unit
     mode: dynamic # static | dynamic | power-aware
 
-  peripherals:
-    - uart
-    - gpio
-    - timer
-    - spi
+  peripherals: [uart, gpio, timer, spi]
 ```
 
-#### 3.1.1 Three-Tier Core Taxonomy
-
-MOSAIC-SoC classifies every core in the library into one of three tiers. The generator uses this to wire the scheduler and set per-tier clock-gating strategies automatically.
-
-| Tier | Label              | Gate-equivalent range | Typical IPC | Role                                 |
-| ---- | ------------------ | --------------------- | ----------- | ------------------------------------ |
-| T1   | **TITAN** (big)    | 25k – 500k GE         | 0.5 – 2.0   | RTOS / orchestration / burst compute |
-| T2   | **ATLAS** (little) | 2k – 25k GE           | 0.1 – 0.5   | Signal conditioning / protocol tasks |
-| T3   | **NANO** (tiny)    | < 2k GE               | 0.01 – 0.1  | Always-on sensor polling / crypto    |
-
-#### 3.1.2 Standard Core Interface (SCI)
-
-Every core from the catalogue is wrapped with a thin **Standard Core Interface** adaptor that presents an identical external view to the bus fabric regardless of the core's internal interface. The SCI exposes:
-
-- **OBI 1.3** instruction + data ports (Harvard)
-- `core_active_o` / `cpi_est_o[7:0]` , utilisation metrics consumed by the scheduler
-- `sleep_req_i` / `wakeup_o` , clock-gate handshake driven by the Task Dispatch Unit
-- Standard async-reset-with-sync-release, interrupt bus, and debug stub
-
-Adding a new core to the catalogue means writing one SCI wrapper (~100–200 lines SV) and a FuseSoC `.core` descriptor , nothing else changes in the generator or fabric.
-
-#### 3.1.3 Task Dispatch Unit (TDU)
-
-The TDU is a < 100 GE memory-mapped hardware block that gives the software scheduler direct visibility into the cluster state without polling each core:
-
-| Register         | Description                                                            |
-| ---------------- | ---------------------------------------------------------------------- |
-| `CORE_STATUS`    | Running / sleeping bitmask (one bit per core)                          |
-| `CORE_CPI_EST`   | 8-bit CPI estimate per core (256-cycle sliding window)                 |
-| `TASK_QUEUE`     | 8-deep FIFO , push a `{priority, tier, pc, arg_ptr}` entry to dispatch |
-| `WAKE_MASK`      | Auto-wake a sleeping core when a matching task arrives                 |
-| `ENERGY_COUNTER` | Per-core activity cycle count for power-aware scheduling               |
-| `SCHED_MODE`     | `0` static / `1` dynamic load / `2` power-aware                        |
-
-The TITAN core runs a FreeRTOS scheduler thread that reads `CORE_CPI_EST`, detects overloaded ATLAS cores, and migrates tasks. NANO cores never call the scheduler , their polling loops are fixed firmware; the TDU clock-gates them between sample events.
-
-#### 3.1.4 Bus Fabric and Memory
-
-The crossbar is a parameterised **OBI N×M crossbar** (from `pulp-platform/obi`), sized automatically by the generator from the core count. L1 SRAM is banked; each bank can be independently clock-gated or put into retention. A generated APB bridge connects low-speed peripherals.
-
-### 3.2 Phase 2 , Agentic Harness
-
-An LLM-driven harness with well-scoped, deterministically-checked skills:
-
-| Skill           | What the agent does                                                  | How we verify it helped                       |
-| --------------- | -------------------------------------------------------------------- | --------------------------------------------- |
-| `config-author` | Translate natural-language intent into a valid `mosaic.yaml`         | Schema validation + diff vs. golden config    |
-| `flow-runner`   | Invoke synthesis / P&R / signoff; parse and summarise logs           | Flow completion rate; time-to-first-clean-run |
-| `drc-triage`    | Read DRC/LVS reports, propose targeted constraint or floorplan fixes | Violation count reduction per agent iteration |
-| `doc-gen`       | Generate reproducible run reports and memory-map documentation       | Report completeness checklist                 |
-
-> **Design principle:** the agent _assists and is checked by_ deterministic tooling. It never replaces signoff. Every agent action is gated by a schema validator or log parser before the flow proceeds.
-
-### 3.3 Open-Source IP Library
-
-All cores and peripherals are permissively licensed. The generator selects from:
-
-**Cores:**
-
-| Core                                                | Tier         | ISA           | Key property                                         |
-| --------------------------------------------------- | ------------ | ------------- | ---------------------------------------------------- |
-| [SERV](https://github.com/olofk/serv)               | NANO         | RV32I         | World's smallest RV core (~200 GE); bit-serial       |
-| [FazyRV](https://github.com/meiniKi/FazyRV)         | NANO / ATLAS | RV32I         | Scalable 1/2/4/8-bit datapath at synthesis time      |
-| [PicoRV32](https://github.com/YosysHQ/picorv32)     | ATLAS        | RV32IMC       | Simple, well-proven, fast bring-up                   |
-| [Ibex / CVE2](https://github.com/lowrisc/ibex)      | TITAN        | RV32IMC       | Industrial-grade 2-stage; OBI-native; silicon-proven |
-| [CV32E40P](https://github.com/openhwgroup/cv32e40p) | TITAN        | RV32IMFCXpulp | 4-stage; DSP extensions; PULP-proven                 |
-| [CVA6](https://github.com/openhwgroup/cva6)         | TITAN        | RV64GC        | Linux-capable; stretch target                        |
-
-**Buses:** OBI (primary), Wishbone (secondary); APB/AXI-Lite for peripherals.
-**Peripherals:** UART, GPIO, timer, SPI, I2C (open-source RTL).
-**Memory:** OpenRAM (GF180MCU) or flip-flop SRAM for bring-up.
+| Field                     | Drives                                                                                                                                                                                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cores[].ip`              | which core IP + its SCI wrapper + FuseSoC dependency                                                                                                                                                                                         |
+| `cores[].count`           | how many copies (each gets its own OBI ports, hart_id, debug, wake)                                                                                                                                                                          |
+| `cores[].role`            | tier → interrupt routing, clock-gate policy, TDU priority (`titan` boots immediately; workers boot dormant)                                                                                                                                  |
+| `cores[].*`               | extra fields (e.g. `chunksize`, `boot_addr`, `memdly1`) → per-core params                                                                                                                                                                    |
+| `memory`                  | SRAM size (banked) + boot ROM size                                                                                                                                                                                                           |
+| `bus`                     | interconnect fabric: `obi` (varlat crossbar), `log` (two-tier logarithmic interconnect: fixed-latency `tcdm_interconnect` over word-interleaved banks + varlat peripheral tier), or `floonoc` (floogen-generated AXI NoC + OBI↔AXI bridges) |
+| `bus_opts`                | per-fabric knobs: `log: {topology: lic\|bfly2\|bfly4, num_banks: auto\|N}` (LIC needs banks ≥ bus masters), `floonoc: {route_algo, endpoints}`                                                                                               |
+| `scheduler.tdu` / `.mode` | enable the TDU + its scheduling policy                                                                                                                                                                                                       |
+| `peripherals`             | which peripheral IPs are in the memory map                                                                                                                                                                                                   |
 
 ---
 
-## 4. Scope: MVP vs. Stretch Goals
+## 4. Repository layout
 
-Scoping is deliberate so there is always a demonstrable, tapeout-ready result.
+```
+mosaic.yaml                 # the PoC config (default for `make mosaic-gen`)
+configs/                    # more configs: mosaic_*.yaml + x-heep *.hjson/*.py
+hw/
+  core-v-mini-mcu/          # the SoC RTL templates (*.sv.tpl) — generated into *.sv
+  sci/                      # Standard Core Interface wrappers (serv/fazyrv/ibex/picorv32/snitch/cva6)
+  tdu/                      # Task Dispatch Unit (rtl + tb + .core)
+  ip/                       # OBI helpers (obi_fifo, ...)
+  vendor/mosaic/            # vendored cores + iDMA (serv, fazyrv, ibex, picorv32, snitch, cva6, idma, axi_obi bridge)
+util/xheep_gen/             # the Python generator (mcu_gen.py, mosaic_config.py, cpu/)
+tb/                         # testbenches (see §8)
+  mosaic/                   #   multi-core cpu_subsystem harness (SV + cocotb)
+  mosaic_soc/               #   full-SoC functional sim + TDU wake-and-run demo
+  idma/                     #   iDMA cocotb tests
+  tdu/                      #   TDU SoC-level cocotb test
+flow/librelane/             # RTL→GDSII hardening flow for GF180MCU
+scripts/                    # build/sim/synth helpers (fusesoc-setup.sh, ...)
+```
 
-### Proof of Concept (committed)
-
-A **heterogeneous BIG.LITTLE SoC** in GF180MCU open PDK:
-
-- 1× FazyRV-CHUNK8 (ATLAS) , parallel signal conditioning tasks
-- 2× SERV (NANO) , always-on sensor polling
-- External memory 32 KB for SRAM, 2 KB for boot ROM, UART + GPIO + timer
-- Task Dispatch Unit (hardware scheduler assist)
-- Full RTL-to-GDSII with **DRC and LVS clean**
-- Area: 1.249 mm^2 in GF180MCU
-- `config-author` + `flow-runner` agent skills working end-to-end
-- One-command reproducibility: `make generate && make flow`
-
-### Stretch Goals
-
-- Generic _N×M_ multi-core generation (any combination of tiers, any core count)
-- `drc-triage` skill: automated constraint adjustment from DRC feedback
-- `doc-gen` skill: auto-generated memory map and run report
-- Measurement study: agent-assisted vs. manual iteration effort (time, DRC rounds)
-- CVA6 Linux-capable TITAN variant
-
----
-
-## 5. Test It , Verification and Measurement Plan
-
-### Functional verification
-
-- RTL simulation (Verilator) of the full generated SoC running firmware that exercises all three tiers simultaneously: NANO cores polling virtual sensors, ATLAS cores running an IIR filter, TITAN core collecting results and transmitting over UART.
-- RISC-V Architectural Tests pass on each wrapped core via the SCI interface.
-- Inter-core communication through shared SRAM verified by directed test.
-
-### Scheduler demonstration
-
-Three simulation runs using the same firmware but different TDU `SCHED_MODE` settings demonstrate static, dynamic load-balancing, and power-aware dispatch. A synthetic workload spike (accelerometer sampling rate doubling for 3 seconds) shows task migration kicking in within 2 scheduler ticks (~10 ms at 50 MHz).
-
-### Flow signoff
-
-- DRC + LVS clean against GF180MCU PDK rule deck.
-- STA timing closure at target clock (50 MHz nominal, conservative for this technology).
-- Area report: estimated PoC die core area ≤ 1.25 mm².
-
-### Agent evaluation (Track D metrics)
-
-| Metric                  | Measurement method                                                                             |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| Config validity rate    | Fraction of agent-generated `mosaic.yaml` files that pass schema validation without human edit |
-| Flow success rate       | Fraction of agent-driven flow runs that complete without manual intervention                   |
-| DRC iteration reduction | Violation count per round in agent-triaged vs. manual debug runs                               |
-| Time-to-clean           | Wall-clock time from first run to DRC/LVS-clean result, agent-assisted vs. manual              |
-
-### Reproducibility
-
-Pinned tool versions (IIC-OSIC-TOOLS container), fixed random seeds, and a single `make` target that regenerates the full design from config and re-runs the flow. All results (area, timing, DRC counts) are checked into the repo.
+> **Never modify `refs/`** (read-only references). **Never commit generated `.sv`** — only
+> `.sv.tpl` templates are version-controlled.
 
 ---
 
-## 6. Publish It , Dissemination Plan
+## 5. Prerequisites
 
-- Public, documented, reproducible repository with example configs, simulation waveforms, and full flow run artefacts.
-- Final report and presentation slides covering the heterogeneous multi-core architecture, generator design, agent skills, and quantitative evaluation results.
-- Write-up of the agent-assisted-vs-manual measurement study as a standalone technical note.
-- Optional: short paper submission to SSCS Code-a-Chip, ORConf 2026, or RISC-V Summit 2026.
+You can install everything natively, or use the [oss-cad-suite](https://github.com/YosysHQ/oss-cad-suite-build)
+bundle (it ships Verilator, Icarus, cocotb and a Python). Versions below are what this
+project is developed/verified against.
 
----
+| Tool                                            | Needed for                                                   | Verified version                               |
+| ----------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------- |
+| **Python** ≥ 3.10                               | the generator + FuseSoC                                      | 3.14                                           |
+| **GNU Make**                                    | top-level flow                                               | 4.4                                            |
+| **Verilator** 5.x                               | all RTL simulation                                           | **5.050** (stable — see note)                  |
+| **cocotb** 2.x                                  | the cocotb test harnesses (`tb/mosaic`, `tb/idma`, `tb/tdu`) | 2.1                                            |
+| **RISC-V bare-metal GCC** (`riscv32-*-elf-gcc`) | full-SoC sim firmware                                        | 16.1                                           |
+| **FuseSoC** + edalize                           | dependency resolution / register gen                         | auto-installed (see §6)                        |
+| _Icarus Verilog_ (optional)                     | —                                                            | 13.0 — _cannot_ compile the full SoC, see note |
+| **Nix** (flakes) + GF180 PDK (optional)         | RTL→GDSII signoff                                            | 2.32                                           |
 
-## 7. Tools and Technology
-
-| Category            | Tool / Source                                                               |
-| ------------------- | --------------------------------------------------------------------------- |
-| EDA flow            | [Librelane](https://github.com/efabless/librelane) (RTL-to-GDSII)           |
-| PDK                 | GF180MCU (Chipathon open PDK)                                               |
-| Environment         | IIC-OSIC-TOOLS container (pinned version, reproducible)                     |
-| Synthesis           | Yosys + ABC (within Librelane)                                              |
-| Place & Route       | OpenROAD (within Librelane)                                                 |
-| Simulation          | Verilator 5.x + cocotb                                                      |
-| IP management       | FuseSoC 2.x                                                                 |
-| Bus fabric          | `pulp-platform/obi` OBI crossbar                                            |
-| Agent stack         | LLM + tool-calling harness (Pi harness or OpenHands); exact runtime `[TBD]` |
-| Formal verification | SymbiYosys + riscv-formal (per-core SCI wrapper check)                      |
-
----
-
-## 8. Timeline (aligned to Chipathon phases)
-
-| Phase       | Milestone                                                                                                                                                      |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Setup**   | IIC-OSIC-TOOLS environment confirmed; `mosaic.yaml` schema v0 finalised; SCI wrapper for SERV and FazyRV passing riscv-formal                                  |
-| **Build**   | PoC-α RTL complete ( BIG.LITTLE SoC); Verilator simulation passing all firmware tests; `config-author` + `flow-runner` skills operational; first Librelane run |
-| **Review**  | DRC/LVS clean on PoC-α; TDU scheduler demonstration in simulation; interim design review submitted; `drc-triage` skill drafted                                 |
-| **Signoff** | Tapeout-ready GDSII; STA closure at 50 MHz; agent evaluation metrics collected; final report + slides + reproducibility package                                |
-
----
-
-## 9. Risks and Mitigation
-
-| Risk                                                   | Likelihood | Mitigation                                                                                                                                                             |
-| ------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| On-Chip Memory too large for first tapeout slot        | Medium     | PoC can be use even smaller cores + use only External Memory. Bigger cores added in stretch phase. Generator architecture is the deliverable regardless of core count. |
-| Agent hallucinates invalid config or flow steps        | Medium     | Every agent output gated by schema validation and log parsing; manual flow path always available as fallback                                                           |
-| GF180MCU SRAM macro unavailable at bring-up            | Low        | Use flip-flop SRAM for Phase 1; swap in OpenRAM macro once characterised                                                                                               |
-| OBI crossbar congestion at +3 cores                    | Low        | Conservative 50 MHz target; single shared L1 with banking keeps peak bandwidth manageable for the target workload                                                      |
-| FazyRV GF180MCU synthesis not previously characterised | Low        | FazyRV is technology-agnostic RTL; Yosys maps it cleanly; worst case fall back to PicoRV32 for ATLAS tier                                                              |
+- **FuseSoC is installed automatically** into a project-local Python venv (`.venv/`) the
+  first time you run a `make` target — from `util/python-requirements.txt`. You don't need
+  to install it by hand.
+- **Use a stable Verilator (5.050 recommended), not an oss-cad-suite nightly.** A nightly
+  build (5.047-devel) was found to miscompile cv32e40x's load-use-hazard stall via its DFG
+  optimizer, breaking the all-TITAN SMP demo (`-fno-dfg`/`-O0` also work around it). The
+  `tb/mosaic_soc/*` scripts default to a pinned 5.050; point `VERILATOR_PIN=<path>` at your
+  own build, or `VERILATOR_PIN=` (empty) to just use whatever `verilator` is on `PATH`.
+- **RISC-V toolchain:** the full-SoC sim scripts default to
+  `RISCV_TC=/opt/riscv32-gnu-toolchain-elf-bin/bin/riscv32-unknown-elf`. Override with
+  `RISCV_TC=<prefix>` (the prefix before `-gcc`). Note this toolchain has **no rv32imc
+  multilib**, so the demo programs are assembled `-march=rv32i` and linked with `ld`
+  directly (the scripts handle this).
+- **Icarus note:** Icarus is event-driven but cannot parse x-heep's OpenTitan/pulp
+  SystemVerilog (package-function param defaults, named struct-pattern params). The
+  `tb/mosaic_soc/run_icarus.sh` harness documents exactly where it fails. **Use Verilator.**
 
 ---
 
-## 10. Team
+## 6. Setup
 
-**Track:** D , AI/LLM for Circuits
-**Team name:** MOSAIC-SoC
+```bash
+git clone https://github.com/MILOUDIAS/MOSAIC-SoC.git
+cd MOSAIC-SoC
 
-| Discord   | GitHub        | Affiliation              | Role                                                                                  |
-| --------- | ------------- | ------------------------ | ------------------------------------------------------------------------------------- |
-| MILOUDIAS | MILOUDIAS     | PhD Student / Researcher | Team Lead , RTL & SoC integration (Phase 1), EDA flow, physical design & verification |
-| kewenlee  | trabdelbasset | PhD Student / Researcher | Agentic harness (Phase 2), EDA flow, physical design & verification                   |
-| yassinehk | yacine-hk     | PhD Student / Researcher | RTL & SoC integration (Phase 1), EDA flow, physical design & verification             |
+# The Python venv (with FuseSoC) is created automatically on the first make target.
+# To create/refresh it explicitly:
+make venv          # builds .venv/ from util/python-requirements.txt
 
-**Background:** Open-source EDA (Librelane, OpenROAD, Cocotb), SoC design (IHP SG13G2, GF180MCU), RISC-V cores, LLM agents.
-
----
-
-## 11. Open Questions
-
-- Confirm GF180MCU SRAM macro availability and characterisation status for the target process node.
-- Define final agent harness pattern (single-agent + tools vs. multi-agent) and LLM runtime for Track D evaluation.
-- Determine whether PoC-α submits as one hierarchical block or as individual hardened macros composed at the top level.
+# Make sure your simulators are on PATH (native install or oss-cad-suite):
+source /path/to/oss-cad-suite/environment   # if using the bundle
+verilator --version                          # expect 5.x
+```
 
 ---
 
-## References
+## 7. Generate the SoC RTL
 
-- IEEE SSCS Chipathon 2026 , _Build It. Test It. Publish It._: <https://github.com/sscs-ose/sscs-chipathon-2026>
-- SSCS PICO design contest: <https://sscs.ieee.org/technical-committees/tc-ose/sscs-pico-design-contest/>
-- Participation guidelines: <https://github.com/sscs-ose/sscs-chipathon-2026/blob/main/docs/guidelines.md>
-- X-HEEP (EPFL): <https://github.com/x-heep/x-heep>
-- FazyRV: <https://github.com/meiniKi/FazyRV>
-- SERV: <https://github.com/olofk/serv>
-- Ibex / CVE2: <https://github.com/lowrisc/ibex>
-- pulp-platform/obi (OBI bus): <https://github.com/pulp-platform/obi>
-- Librelane: <https://github.com/efabless/librelane>
-- IIC-OSIC-TOOLS: <https://github.com/iic-jku/iic-osic-tools>
+Render the RTL templates from a config (this is the core of the "config-driven" flow):
+
+```bash
+# Generate the PoC SoC (mosaic.yaml): 1x cv32e20 + 2x fazyrv + 4x serv + TDU + iDMA
+make mosaic-gen
+
+# Generate a different config:
+make mosaic-gen MOSAIC_CFG=configs/mosaic_all_cores.yaml   # all 5 core types
+make mosaic-gen MOSAIC_CFG=configs/mosaic_wake_demo.yaml   # the 3-core wake demo (§8)
+```
+
+`make mosaic-gen` renders every `*.sv.tpl` into a `*.sv`, then runs the FuseSoC register
+generators (via `scripts/fusesoc-setup.sh`, which excludes `refs/` so FuseSoC doesn't crash
+on reference fixtures). Re-run it **after any `.sv.tpl` change** — stale generated RTL
+causes confusing errors.
+
+> Single-core x-heep generation is still available via `make mcu-gen CPU=... BUS=...` — see
+> `make help`.
+
+---
+
+## 8. Run the simulations & tests
+
+All simulations use **Verilator**. Each runner generates the RTL it needs, builds, runs,
+and restores the default config — so they're self-contained.
+
+### 8.1 Full-SoC TDU wake-and-run demo ✅ (the headline test)
+
+The complete SoC (testharness → `x_heep_system` → `core_v_mini_mcu`) where TITAN boots,
+**wakes both workers via the TDU**, and each woken worker runs its own program through the
+shared bus and reports back:
+
+```bash
+tb/mosaic_soc/run.sh
+```
+
+Expected (3 real cores — cv32e20 TITAN + fazyrv ATLAS + serv NANO):
+
+```
+write hart=0 addr=0x200a000c: data=0x00000006   # TITAN writes TDU WAKE_REQ
+write hart=1 addr=0x00003004: data=0xa71a5000    # ATLAS (fazyrv) sentinel
+write hart=2 addr=0x00003008: data=0x4e414e00    # NANO  (serv)   sentinel
+### RESULT: EXIT SUCCESS — full multi-core SoC executed the program ✓
+```
+
+The diagnostic top (dumps sentinels, wake latches, fetch traces) builds with:
+
+```bash
+tb/mosaic_soc/build_diag.sh
+```
+
+**Production firmware on the full 7-hart PoC** — the same full-SoC sim, but with the
+default `mosaic.yaml` (1 cv32e20 + 2 fazyrv + 4 serv) running the production C firmware
+(`sw/firmware/` → `mosaic_fw.hex`): TITAN's `titan_main.c` configures the TDU, queues all
+6 task descriptors, releases the workers (push-all-then-wake), and each worker pops a
+unique descriptor from TDU `TASK_POP`, runs its workload, and reports into its per-slot
+sentinel. Exits at ~300k cycles:
+
+```bash
+tb/mosaic_soc/run_fw.sh
+# ### RESULT: EXIT SUCCESS — production firmware ran on the full 7-hart SoC ✓
+```
+
+**Newly-integrated cores (PicoRV32 · Snitch · CVA6)** — the same wake demo runs unchanged
+with each of the three cores added in 2026-07, plus a combined config where a CVA6 TITAN
+wakes a Snitch worker and a PicoRV32 worker over the shared bus:
+
+```bash
+MOSAIC_CFG=configs/mosaic_picorv32.yaml  tb/mosaic_soc/run.sh   # 2× PicoRV32 workers
+MOSAIC_CFG=configs/mosaic_snitch.yaml    tb/mosaic_soc/run.sh   # 2× Snitch workers
+MOSAIC_CFG=configs/mosaic_cva6.yaml      tb/mosaic_soc/run.sh   # CVA6 TITAN (32-bit, sim-only)
+MOSAIC_CFG=configs/mosaic_new_cores.yaml tb/mosaic_soc/run.sh   # CVA6 + Snitch + PicoRV32 together → EXIT SUCCESS
+```
+
+> CVA6 is integrated for **simulation only** (32-bit `cv32a65x`-derived config; single AXI4
+> master → `hw/vendor/mosaic/axi_obi/xheep_axi_burst_to_obi.sv`). It stays out of the GF180
+> tapeout.
+
+**All-TITAN SMP demo** — 4 orchestrator-class cores (2× cv32e20 + 2× cv32e40x) booting
+together, on any of the three bus fabrics:
+
+```bash
+MOSAIC_CFG=configs/mosaic_titan_obi.yaml     tb/mosaic_soc/run_titan.sh   # EXIT SUCCESS
+MOSAIC_CFG=configs/mosaic_titan_log.yaml     tb/mosaic_soc/run_titan.sh
+MOSAIC_CFG=configs/mosaic_titan_floonoc.yaml tb/mosaic_soc/run_titan.sh
+```
+
+> See [`tb/mosaic_soc/README.md`](tb/mosaic_soc/README.md) for the single-core functional
+> sim and the five RTL fixes this demo required (packed wake ports, the per-hart array
+> range fix, the SCI OBI-bridge fix, and the FazyRV clock-stall adapter).
+
+### 8.2 Multi-core SCI wake-loop ✅
+
+Builds the **real generated `cpu_subsystem`** and exercises the SCI-wrapped serial cores
+against per-hart OBI memories — proves dormancy + per-hart wake + execution.
+
+```bash
+tb/mosaic/run.sh         # pure-SV Verilator TB (no cocotb / GCC needed) — 3/3 cores
+tb/mosaic/cocotb/run.sh  # cocotb TB: dormant → selective-wake → all-wake loop
+```
+
+Expected (cocotb): `TESTS=1 PASS=1 FAIL=0` — `serv`, `qerv`, `fazyrv` all
+`dormant → woken → executed`.
+
+### 8.3 Task Dispatch Unit tests ✅
+
+```bash
+tb/tdu/soc/cocotb/run.sh     # SoC-level reg-bus tap test (SCHED_MODE, FIFO, WAKE_REQ)
+tb/tdu/soc/cocotb/run.sh bug # also run the original buggy tap the test is designed to catch
+```
+
+The TDU also has a self-checking **unit** testbench (`hw/tdu/tb/tdu_tb.sv`, 22/22 checks incl. targeted auto-wake),
+built/run via its FuseSoC core `hw/tdu/tdu.core`.
+
+### 8.4 iDMA tests ✅
+
+```bash
+tb/idma/cocotb/run.sh    # mem-to-mem copy at per-block AND SoC (arbitrated) level
+```
+
+Expected: `TESTS=1 PASS=1` at each level (no RTL generation needed — iDMA is static RTL).
+
+### 8.5 Alternative bus fabrics ✅
+
+```bash
+tb/log_xbar/run.sh                # bus:log — LIC parallel banks / RR / periph tier / ERROR (T1..T5)
+tb/floonoc/cocotb/run.sh          # bus:floonoc — OBI<->AXI bridge loopback (stage 1)
+tb/floonoc/cocotb/run.sh stage2   # …plus loopback through the generated FlooNoC (stage 2)
+
+# The full-SoC TDU wake-and-run demo (§8.1) also runs on both new fabrics:
+MOSAIC_CFG=configs/mosaic_wake_demo_log.yaml tb/mosaic_soc/run.sh   # EXIT SUCCESS
+MOSAIC_CFG=configs/mosaic_floonoc.yaml       tb/mosaic_soc/run.sh   # EXIT SUCCESS
+```
+
+### 8.6 x-heep application flow (full PoC incl. cv32e20, needs a toolchain)
+
+```bash
+make mosaic-gen                 # generate the SoC
+make verilator-build            # build the Verilator model via FuseSoC
+make app PROJECT=hello_world    # compile an app (needs riscv32 GCC)
+make verilator-run              # run firmware on the model
+```
+
+---
+
+## 9. RTL → GDSII hardening (GF180MCU)
+
+The LibreLane flow lives in [`flow/librelane/`](flow/librelane/). A real signoff run needs
+**Nix (flakes) + ~20 GB disk** and is multi-hour; the first `nix-shell` pulls the toolchain
+from the FOSSi binary cache.
+
+```bash
+cd flow/librelane
+nix-shell shell.nix          # LibreLane 3.0.0 + GF180 EDA tools
+make clone-pdk               # wafer-space gf180mcu @ 1.8.0
+
+# Chip flow — full chip with pad ring + sealring:
+make harden SLOT=mosaic      # mosaic-gen → flatten → librelane → GDS
+make padring                 # fast pad-only placement
+make harden-nodrc            # skip DRC/antenna (dev)
+
+# Classic flow — SoC core only, no pad ring (early synth/PnR/area):
+make classic
+make classic-nodrc
+```
+
+> Status: the GF180 pad frame elaborates clean; the remaining authoring step is binding the
+> SoC pins in `src/mosaic_soc_core.sv` and mapping the 32 KB SRAM to GF180 hard macros.
+> See [`flow/librelane/README.md`](flow/librelane/README.md).
+
+---
+
+## 10. Config reference
+
+| Config                                        | Cores                                                      | Used by                                                                |
+| --------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `mosaic.yaml`                                 | **PoC:** 1× cv32e20 + 2× fazyrv + 4× serv                  | default for `make mosaic-gen`, the GDS flow                            |
+| `configs/mosaic_wake_demo.yaml`               | 1× cv32e20 + 1× fazyrv + 1× serv (per-core boot addr)      | `tb/mosaic_soc/run.sh` (§8.1)                                          |
+| `configs/mosaic_sim.yaml`                     | serv + qerv + fazyrv (all workers)                         | `tb/mosaic/*` (§8.2)                                                   |
+| `configs/mosaic_all_cores.yaml`               | cv32e20 + ibex + fazyrv + qerv + serv                      | acceptance (renders all 5 SCI branches)                                |
+| `configs/mosaic_log.yaml`                     | serv + qerv + fazyrv on `bus: log` (16 il banks)           | `tb/log_xbar/run.sh`                                                   |
+| `configs/mosaic_log_poc.yaml`                 | PoC topology on `bus: log` (32×2 KB banks)                 | full-size log generation/lint                                          |
+| `configs/mosaic_wake_demo_log.yaml`           | wake demo on `bus: log` (32 banks: +8 TB ext masters)      | `MOSAIC_CFG=… tb/mosaic_soc/run.sh`                                    |
+| `configs/mosaic_floonoc.yaml`                 | wake demo on `bus: floonoc` (FlooNoC AXI NoC)              | `MOSAIC_CFG=… tb/mosaic_soc/run.sh`, `tb/floonoc/cocotb/run.sh stage2` |
+| `configs/mosaic_picorv32.yaml`                | cv32e20 + 2× PicoRV32 (wake demo)                          | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
+| `configs/mosaic_snitch.yaml`                  | cv32e20 + 2× Snitch (wake demo)                            | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
+| `configs/mosaic_cva6.yaml`                    | **CVA6 TITAN** (sim-only) + fazyrv + serv                  | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
+| `configs/mosaic_new_cores.yaml`               | **CVA6 + Snitch + PicoRV32** — the combined new-cores demo | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
+| `configs/mosaic_titan_{obi,log,floonoc}.yaml` | all-TITAN SMP: 2× cv32e20 + 2× cv32e40x                    | `MOSAIC_CFG=… tb/mosaic_soc/run_titan.sh` (§8.1)                       |
+
+Pass any of them with `MOSAIC_CFG=<path>` to `make mosaic-gen`, or via `MOSAIC_CFG`/`RISCV_TC`
+env vars to the `tb/mosaic_soc` scripts.
+
+---
+
+## 11. Project status
+
+**Phase 1 — config-driven multi-core generator: working.**
+
+- ✅ `mosaic.yaml` → `make mosaic-gen` renders the full multi-core SoC; per-core master
+  indices, hart IDs, interrupt routing, and the multi-master `system_bus`.
+- ✅ SCI wrappers + vendored cores — **9 cores** behind one OBI interface: cv32e20, cv32e40x,
+  Ibex, FazyRV, QERV, SERV, and (added 2026-07) **PicoRV32, Snitch, and CVA6** (32-bit). CVA6
+  is **simulation-only** (AXI→OBI bridged) and stays out of the GF180 die; PicoRV32 and Snitch
+  are tapeout-eligible.
+- ✅ TDU (8-deep FIFO, per-hart wake, CPI/energy) — unit + SoC tests pass.
+- ✅ iDMA integrated (OBI backend) — per-block + SoC mem-to-mem tests pass.
+- ✅ **Full multi-core SoC elaborates clean** (`verilator --lint-only`, 837 modules) — the
+  first time the whole top was ever elaborated; surfaced & fixed several latent
+  port/type/package bugs.
+- ✅ **Full-SoC functional sim passes** — single-core boot-and-run, **and the 3-core TDU
+  wake-and-run demo reaches `EXIT SUCCESS`** (TITAN wakes ATLAS + NANO; each runs its own
+  program and writes its sentinel). Validated against the cocotb regression too.
+- ✅ **All 9 cores sim-verified in the full SoC** — PicoRV32, Snitch, and CVA6 each reach
+  `EXIT SUCCESS` in the TDU wake demo, plus a combined config (CVA6 TITAN + Snitch + PicoRV32)
+  and an all-TITAN 4-core SMP demo (2× cv32e20 + 2× cv32e40x) across all three bus fabrics.
+- ✅ **Full 18-step regression green** under pinned Verilator 5.050 (unit/SoC TDU, iDMA,
+  log-xbar, FlooNoC, SCI cocotb, 7 wake demos, 3 all-TITAN SMP, production firmware, pytest).
+  A nightly-Verilator DFG miscompile of cv32e40x was root-caused and pinned around.
+- 🔜 LibreLane GF180 hardening: flow wired, pad frame clean; pin-binding + SRAM macros are
+  the remaining authoring steps before a tapeout signoff.
+
+**Phase 2 — agentic harness (oh-my-soc, based on oh-my-pi) with skills for config authoring, flow running, DRC
+triage, and doc generation: implemented**.
+
+---
+
+## 12. Extending the SoC
+
+**Add a new core** :
+
+1. Study the core in `refs/IP_Cores_Catalog/<core>/` (bus, params, HDL).
+2. Write `hw/sci/<core>_sci.sv` presenting OBI 1.3 I+D ports.
+3. Add `util/xheep_gen/cpu/<core>.py` and register it in `AVAILABLE_CPUS`
+   (`util/xheep_gen/cpu/cpu.py`).
+4. Add a `% elif group.name == "<core>":` branch in
+   `hw/core-v-mini-mcu/cpu_subsystem.sv.tpl`.
+5. Add the FuseSoC dependency in `hw/sci/sci.core`.
+6. Add a config and run `make mosaic-gen` + the `tb/mosaic` harness.
+
+**Add a new interconnect/NoC:**.
+
+> Heads-up for serial cores on the registered system bus: cores built for _combinational_
+> memory (e.g. FazyRV) need the **clock-stall adapter** in their SCI wrapper (freeze the
+> core's clock while a fetch is outstanding) so the 1-cycle bus looks combinational. See
+> `hw/sci/fazyrv_sci.sv`.
+
+---
+
+## Built on X-HEEP
+
+MOSAIC-SoC is built on **[X-HEEP](https://github.com/esl-epfl/x-heep)** (eXtensible
+Heterogeneous Energy-Efficient Platform), a RISC-V microcontroller from EPFL's
+[ESL](https://www.epfl.ch/labs/esl/) lab (with UPM CEI and POLITO VLSI), founded on the
+[PULP-Platform](https://pulp-platform.org/) and [OpenTitan](https://opentitan.org/)
+projects. X-HEEP provides the base MCU, the FuseSoC + Mako generation flow, and the
+peripheral/memory IP that MOSAIC extends into a multi-core generator. X-HEEP docs:
+[Read the Docs](https://x-heep.readthedocs.io/en/latest/index.html).
+
+If you use X-HEEP in academic work, please cite:
+[X-HEEP Paper](https://doi.org/10.1109/ISVLSI65124.2025.11130281).
+
+```bibtex
+@INPROCEEDINGS{machetti2025xheep,
+  author={Machetti, Simone and Schiavone, Pasquale Davide and Ansaloni, Giovanni and Peón-Quirós, Miguel and Atienza, David},
+  booktitle={2025 IEEE Computer Society Annual Symposium on VLSI (ISVLSI)},
+  title={X-HEEP: An Open-Source, Configurable and Extendible RISC-V Platform for TinyAI Applications},
+  year={2025},
+  doi={10.1109/ISVLSI65124.2025.11130281}
+}
+```
+
+**License:** see [LICENSE](./LICENSE) (Apache-2.0, inherited from X-HEEP; MOSAIC additions
+under the same terms unless noted). Reference IPs under `refs/` retain their own licenses.

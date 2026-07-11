@@ -1,0 +1,180 @@
+<mxfile host="app.diagrams.net" agent="MOSAIC-SoC" version="24.0.0" type="device">
+  <diagram name="MOSAIC-SoC" id="mosaic-soc-top">
+    <mxGraphModel dx="1600" dy="1180" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1240" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===== Title ===== -->
+        <mxCell id="title" value="&lt;b&gt;MOSAIC-SoC&lt;/b&gt; — heterogeneous multi-core RISC-V SoC&amp;nbsp;&amp;nbsp;(config: mosaic_poc_alpha · PDK: GF180MCU · 1.249 mm²)" style="text;html=1;align=center;verticalAlign=middle;fontSize=18;fontColor=#222222;" vertex="1" parent="1">
+          <mxGeometry x="40" y="15" width="1560" height="34" as="geometry" />
+        </mxCell>
+
+        <!-- ===== SoC outer boundary ===== -->
+        <mxCell id="soc" value="" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#333333;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="1560" height="1130" as="geometry" />
+        </mxCell>
+
+        <!-- ===== CPU SUBSYSTEM (multi-core) container ===== -->
+        <mxCell id="cpu_ss" value="&lt;b&gt;CPU SUBSYSTEM&lt;/b&gt; — heterogeneous multi-core (NUM_HARTS = 7)" style="rounded=1;arcSize=4;whiteSpace=wrap;html=1;verticalAlign=top;fontStyle=1;fontSize=13;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="70" y="95" width="850" height="300" as="geometry" />
+        </mxCell>
+
+        <!-- TITAN -->
+        <mxCell id="titan" value="&lt;b&gt;TITAN&lt;/b&gt;&lt;br&gt;&lt;br&gt;cv32e20 (CVE2)&lt;br&gt;RV32EMC · 2-stage&lt;br&gt;&lt;br&gt;native OBI + CV-X-IF&lt;br&gt;&lt;i&gt;boots immediately&lt;br&gt;(fetch_enable = 1)&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="90" y="140" width="175" height="240" as="geometry" />
+        </mxCell>
+
+        <!-- ATLAS group -->
+        <mxCell id="atlas_grp" value="&lt;b&gt;ATLAS ×2&lt;/b&gt;&lt;br&gt;fazyrv_sci · WB→OBI + clock-stall" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=11;fillColor=#eafaf1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="285" y="140" width="290" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="atlas0" value="&lt;b&gt;FazyRV&lt;/b&gt;&lt;br&gt;CHUNK-8&lt;br&gt;RV32I&lt;br&gt;&lt;br&gt;serial&lt;br&gt;datapath" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="300" y="190" width="125" height="175" as="geometry" />
+        </mxCell>
+        <mxCell id="atlas1" value="&lt;b&gt;FazyRV&lt;/b&gt;&lt;br&gt;CHUNK-8&lt;br&gt;RV32I&lt;br&gt;&lt;br&gt;serial&lt;br&gt;datapath" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="435" y="190" width="125" height="175" as="geometry" />
+        </mxCell>
+
+        <!-- NANO group -->
+        <mxCell id="nano_grp" value="&lt;b&gt;NANO ×4&lt;/b&gt;&lt;br&gt;serv_sci · WB→OBI" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=11;fillColor=#f3eefa;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="595" y="140" width="310" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="nano0" value="&lt;b&gt;SERV&lt;/b&gt; · RV32I · bit-serial · ~200 GE" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="610" y="190" width="135" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="nano1" value="&lt;b&gt;SERV&lt;/b&gt; · RV32I · bit-serial · ~200 GE" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="755" y="190" width="135" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="nano2" value="&lt;b&gt;SERV&lt;/b&gt; · RV32I · bit-serial · ~200 GE" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="610" y="285" width="135" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="nano3" value="&lt;b&gt;SERV&lt;/b&gt; · RV32I · bit-serial · ~200 GE" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="755" y="285" width="135" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- ===== TDU (MOSAIC addition) ===== -->
+        <mxCell id="tdu" value="&lt;b&gt;Task Dispatch&lt;br&gt;Unit (TDU)&lt;/b&gt;&lt;br&gt;@ 0x200A0000&lt;br&gt;&lt;br&gt;8-deep task FIFO&lt;br&gt;WAKE_MASK&lt;br&gt;CORE_STATUS&lt;br&gt;CPI / energy&lt;br&gt;SCHED_MODE&lt;br&gt;&lt;br&gt;&lt;b&gt;core_wake[7]&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="940" y="140" width="160" height="240" as="geometry" />
+        </mxCell>
+
+        <!-- ===== DEBUG SUBSYSTEM ===== -->
+        <mxCell id="dbg" value="&lt;b&gt;DEBUG SUBSYSTEM&lt;/b&gt; (multi-hart)&lt;br&gt;&lt;br&gt;dm_obi_top&lt;br&gt;JTAG / SPI-slave&lt;br&gt;debug_req[7]" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="140" width="430" height="240" as="geometry" />
+        </mxCell>
+
+        <!-- ===== BUS SUBSYSTEM (OBI crossbar) ===== -->
+        <mxCell id="bus" value="&lt;b&gt;BUS SUBSYSTEM — OBI N×M Crossbar&lt;/b&gt;&amp;nbsp;&amp;nbsp;(xbar_varlat, auto-sized: 2×7 core master ports + iDMA + debug → RAM / boot ROM / AO / peripherals / flash)" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;fontSize=13;fillColor=#d4e1f5;strokeColor=#3a5e8c;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="70" y="430" width="1490" height="64" as="geometry" />
+        </mxCell>
+
+        <!-- ===== MEMORY SUBSYSTEM ===== -->
+        <mxCell id="mem_ss" value="&lt;b&gt;MEMORY SUBSYSTEM&lt;/b&gt; — 32 KB SRAM (banked, per-bank clock-gated)" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontStyle=1;fontSize=13;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="70" y="525" width="730" height="210" as="geometry" />
+        </mxCell>
+        <mxCell id="ram0" value="&lt;b&gt;RAM&lt;br&gt;bank 0&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="90" y="575" width="155" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="ram1" value="&lt;b&gt;RAM&lt;br&gt;bank 1&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="260" y="575" width="155" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="ram2" value="&lt;b&gt;RAM&lt;br&gt;bank 2&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="430" y="575" width="155" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="ram3" value="&lt;b&gt;RAM&lt;br&gt;bank 3&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="600" y="575" width="155" height="135" as="geometry" />
+        </mxCell>
+
+        <!-- ===== iDMA (MOSAIC addition) ===== -->
+        <mxCell id="idma" value="&lt;b&gt;iDMA&lt;/b&gt;&lt;br&gt;(pulp-platform)&lt;br&gt;&lt;br&gt;register frontend&lt;br&gt;+ ND midend&lt;br&gt;+ OBI backend&lt;br&gt;&lt;br&gt;multi-port DMA master&lt;br&gt;&lt;i&gt;(replaces x-heep DMA)&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="830" y="525" width="200" height="210" as="geometry" />
+        </mxCell>
+
+        <!-- ===== AO PERIPHERAL SUBSYSTEM ===== -->
+        <mxCell id="ao_ss" value="&lt;b&gt;AO PERIPHERAL SUBSYSTEM&lt;/b&gt; (always-on)" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontStyle=1;fontSize=13;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="70" y="775" width="900" height="295" as="geometry" />
+        </mxCell>
+        <mxCell id="ao_pm"   value="POWER MANAGER" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="90" y="820" width="195" height="95" as="geometry" /></mxCell>
+        <mxCell id="ao_tmr"  value="TIMER" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="305" y="820" width="195" height="95" as="geometry" /></mxCell>
+        <mxCell id="ao_brom" value="&lt;b&gt;BOOT ROM&lt;/b&gt;&lt;br&gt;(2 KB)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="520" y="820" width="195" height="95" as="geometry" /></mxCell>
+        <mxCell id="ao_socc" value="&lt;b&gt;SOC CTRL&lt;/b&gt;&lt;br&gt;exit_value / valid" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="735" y="820" width="195" height="95" as="geometry" /></mxCell>
+        <mxCell id="ao_spi"  value="SPI" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="90" y="935" width="195" height="95" as="geometry" /></mxCell>
+        <mxCell id="ao_sflash" value="SPI FLASH" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="305" y="935" width="195" height="95" as="geometry" /></mxCell>
+        <mxCell id="ao_gpio" value="GPIO AO" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="520" y="935" width="195" height="95" as="geometry" /></mxCell>
+        <mxCell id="ao_fic"  value="FAST INTR CTRL" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="735" y="935" width="195" height="95" as="geometry" /></mxCell>
+
+        <!-- ===== PERIPHERAL SUBSYSTEM (user) ===== -->
+        <mxCell id="periph_ss" value="&lt;b&gt;PERIPHERAL SUBSYSTEM&lt;/b&gt; (user)" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontStyle=1;fontSize=13;fillColor=#eafaf1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="990" y="775" width="570" height="295" as="geometry" />
+        </mxCell>
+        <mxCell id="p_uart" value="&lt;b&gt;UART&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1010" y="820" width="165" height="95" as="geometry" /></mxCell>
+        <mxCell id="p_spi"  value="&lt;b&gt;SPI&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1195" y="820" width="165" height="95" as="geometry" /></mxCell>
+        <mxCell id="p_plic" value="PLIC" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1380" y="820" width="160" height="95" as="geometry" /></mxCell>
+        <mxCell id="p_gpio" value="&lt;b&gt;GPIO&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1010" y="935" width="165" height="95" as="geometry" /></mxCell>
+        <mxCell id="p_tmr"  value="&lt;b&gt;TIMER&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1195" y="935" width="165" height="95" as="geometry" /></mxCell>
+
+        <!-- ===== Legend ===== -->
+        <mxCell id="leg_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1"><mxGeometry x="1380" y="940" width="160" height="92" as="geometry" /></mxCell>
+        <mxCell id="leg_t" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1388" y="944" width="120" height="14" as="geometry" /></mxCell>
+        <mxCell id="leg_m1" value="" style="rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="1390" y="962" width="16" height="12" as="geometry" /></mxCell>
+        <mxCell id="leg_m1t" value="MOSAIC addition" style="text;html=1;align=left;fontSize=9;" vertex="1" parent="1"><mxGeometry x="1410" y="960" width="125" height="14" as="geometry" /></mxCell>
+        <mxCell id="leg_m2" value="" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="1390" y="980" width="16" height="12" as="geometry" /></mxCell>
+        <mxCell id="leg_m2t" value="serial worker core (SCI)" style="text;html=1;align=left;fontSize=9;" vertex="1" parent="1"><mxGeometry x="1410" y="978" width="125" height="14" as="geometry" /></mxCell>
+        <mxCell id="leg_m3" value="" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="1390" y="998" width="16" height="12" as="geometry" /></mxCell>
+        <mxCell id="leg_m3t" value="TITAN (native OBI)" style="text;html=1;align=left;fontSize=9;" vertex="1" parent="1"><mxGeometry x="1410" y="996" width="125" height="14" as="geometry" /></mxCell>
+        <mxCell id="leg_m4" value="" style="rounded=1;fillColor=#d4e1f5;strokeColor=#3a5e8c;" vertex="1" parent="1"><mxGeometry x="1390" y="1016" width="16" height="12" as="geometry" /></mxCell>
+        <mxCell id="leg_m4t" value="OBI bus / crossbar" style="text;html=1;align=left;fontSize=9;" vertex="1" parent="1"><mxGeometry x="1410" y="1014" width="125" height="14" as="geometry" /></mxCell>
+
+        <!-- ===== Connections ===== -->
+        <!-- TDU wake -> CPU cluster -->
+        <mxCell id="e_wake" value="core_wake" style="endArrow=classic;html=1;strokeColor=#d79b00;strokeWidth=2;dashed=1;fontColor=#d79b00;fontSize=10;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="tdu" target="cpu_ss">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- CPU cluster -> bus (OBI master ports) -->
+        <mxCell id="e_cpu_bus" value="OBI instr + data ×7" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#3a5e8c;strokeWidth=2;fontSize=10;exitX=0.4;exitY=1;entryX=0.25;entryY=0;" edge="1" parent="1" source="cpu_ss" target="bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- TDU -> bus (reg tap, AO) -->
+        <mxCell id="e_tdu_bus" value="reg-bus tap (AO)" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#d79b00;strokeWidth=1;fontSize=9;exitX=0.5;exitY=1;entryX=0.62;entryY=0;" edge="1" parent="1" source="tdu" target="bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- Debug <-> bus -->
+        <mxCell id="e_dbg_bus" value="master + slave" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#3a5e8c;strokeWidth=1;fontSize=9;exitX=0.75;exitY=1;entryX=0.9;entryY=0;" edge="1" parent="1" source="dbg" target="bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- bus -> memory -->
+        <mxCell id="e_bus_mem" value="OBI slave" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#3a5e8c;strokeWidth=2;fontSize=10;exitX=0.15;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="bus" target="mem_ss">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- iDMA -> bus (master) -->
+        <mxCell id="e_idma_bus" value="DMA master" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#d79b00;strokeWidth=2;fontSize=10;exitX=0.5;exitY=0;entryX=0.55;entryY=1;" edge="1" parent="1" source="idma" target="bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- bus -> AO peripherals -->
+        <mxCell id="e_bus_ao" value="" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#3a5e8c;strokeWidth=2;exitX=0.3;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="bus" target="ao_ss">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- bus -> user peripherals -->
+        <mxCell id="e_bus_periph" value="" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#3a5e8c;strokeWidth=2;exitX=0.85;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="bus" target="periph_ss">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ===== External interface (pad) labels ===== -->
+        <mxCell id="pad_jtag" value="JTAG&lt;br&gt;tck · tms · tdi · tdo · trst" style="text;html=1;align=center;fontSize=10;fontColor=#444444;" vertex="1" parent="1"><mxGeometry x="1615" y="230" width="80" height="60" as="geometry" /></mxCell>
+        <mxCell id="e_pad_jtag" style="endArrow=classic;html=1;strokeColor=#444444;exitX=1;exitY=0.5;" edge="1" parent="1" source="dbg" target="pad_jtag"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="pad_uart" value="uart_rx / uart_tx" style="text;html=1;align=center;fontSize=10;fontColor=#444444;" vertex="1" parent="1"><mxGeometry x="1015" y="1100" width="155" height="20" as="geometry" /></mxCell>
+        <mxCell id="e_pad_uart" style="endArrow=classic;html=1;strokeColor=#444444;exitX=0.5;exitY=1;" edge="1" parent="1" source="p_uart" target="pad_uart"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="pad_gpio" value="gpio_io[31:0]" style="text;html=1;align=center;fontSize=10;fontColor=#444444;" vertex="1" parent="1"><mxGeometry x="1010" y="1100" width="165" height="20" as="geometry" /></mxCell>
+
+        <mxCell id="pad_spi" value="spi: sd · cs · sck" style="text;html=1;align=center;fontSize=10;fontColor=#444444;" vertex="1" parent="1"><mxGeometry x="1195" y="1100" width="165" height="20" as="geometry" /></mxCell>
+        <mxCell id="e_pad_spi" style="endArrow=classic;html=1;strokeColor=#444444;exitX=0.5;exitY=1;" edge="1" parent="1" source="p_spi" target="pad_spi"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="pad_soc" value="boot_select · execute_from_flash · exit_valid / exit_value" style="text;html=1;align=center;fontSize=10;fontColor=#444444;" vertex="1" parent="1"><mxGeometry x="620" y="1100" width="320" height="20" as="geometry" /></mxCell>
+        <mxCell id="e_pad_soc" style="endArrow=classic;html=1;strokeColor=#444444;exitX=0.5;exitY=1;" edge="1" parent="1" source="ao_socc" target="pad_soc"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

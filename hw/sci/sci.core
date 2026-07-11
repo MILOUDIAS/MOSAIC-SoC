@@ -1,0 +1,31 @@
+CAPI=2:
+
+name: mosaic:ip:sci
+description: "MOSAIC-SoC Standard Core Interface (SCI) wrappers"
+
+# Copyright MOSAIC-SoC
+# SPDX-License-Identifier: SHL-0.51
+
+filesets:
+  files_rtl:
+    depend:
+      - x-heep:rtl:structs
+      - mosaic:ip:fazyrv
+      - mosaic:ip:servile
+      - mosaic:ip:ibex
+      - mosaic:ip:picorv32
+      - mosaic:ip:snitch
+      - mosaic:ip:cva6
+    files:
+    - fazyrv_sci.sv
+    - serv_sci.sv
+    - ibex_sci.sv
+    - picorv32_sci.sv
+    - snitch_sci.sv
+    - cva6_sci.sv
+    file_type: systemVerilogSource
+
+targets:
+  default:
+    filesets:
+    - files_rtl

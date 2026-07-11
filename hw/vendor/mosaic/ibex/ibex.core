@@ -1,0 +1,110 @@
+CAPI=2:
+
+# Ibex RV32 core (lowRISC) — MOSAIC-SoC vendored copy.
+#
+# SELF-CONTAINED: this core bundles the exact lowRISC prim/prim_generic/dv
+# dependency closure that ibex_top needs (see vendor/), so it elaborates
+# standalone (verified Verilator lint-clean with hw/sci/ibex_sci.sv). The
+# closure was extracted from refs/IP_Cores_Catalog/ibex.
+#
+# NOTE on multi-core SoC builds: the bundled prim cells (prim_buf,
+# prim_clock_gating, prim_flop, prim_lfsr, prim_count, prim_ram_1p*, ...)
+# OVERLAP the OpenTitan prim cells that cv32e20 pulls via the lowrisc:prim:*
+# VLNVs already in this repo. Compiling both in one design unit will produce
+# duplicate-module errors. To co-build Ibex with cv32e20 in a full SoC, switch
+# this core to `depend` on the repo's shared lowrisc:prim:* VLNVs and keep
+# vendored ONLY the cells x-heep lacks (prim_mubi_pkg, prim_count_pkg,
+# prim_count) — a prim-version reconciliation step. The all-cores GENERATION
+# test (template render) does not compile RTL, so it is unaffected.
+
+name: mosaic:ip:ibex
+description: "Ibex RV32 core (lowRISC) — MOSAIC-SoC self-contained vendored copy"
+license: Apache-2.0
+
+filesets:
+  # Macro / assertion includes — added to +incdir, not compiled as sources.
+  rtl_includes:
+    files:
+      - vendor/prim/rtl/prim_assert.sv: {is_include_file: true}
+      - vendor/prim/rtl/prim_flop_macros.sv: {is_include_file: true}
+      - vendor/prim/rtl/prim_assert_standard_macros.svh: {is_include_file: true}
+      - vendor/prim/rtl/prim_assert_dummy_macros.svh: {is_include_file: true}
+      - vendor/prim/rtl/prim_assert_sec_cm.svh: {is_include_file: true}
+      - vendor/prim/rtl/prim_assert_yosys_macros.svh: {is_include_file: true}
+      - vendor/prim/rtl/prim_fifo_assert.svh: {is_include_file: true}
+      - vendor/prim/rtl/prim_macros.svh: {is_include_file: true}
+      - vendor/prim/rtl/prim_secded_inc.svh: {is_include_file: true}
+      - vendor/prim/rtl/prim_util_get_scramble_params.svh: {is_include_file: true}
+      - vendor/prim/rtl/prim_util_memload.svh: {is_include_file: true}
+      - vendor/dv_utils/dv_fcov_macros.svh: {is_include_file: true}
+      - vendor/dv_utils/dv_macros.svh: {is_include_file: true}
+    file_type: systemVerilogSource
+
+  rtl:
+    files:
+      # --- packages first (declaration order matters) ---
+      - vendor/prim_generic/rtl/prim_pkg.sv
+      - vendor/prim/rtl/prim_util_pkg.sv
+      - vendor/prim/rtl/prim_secded_pkg.sv
+      - vendor/prim/rtl/prim_cipher_pkg.sv
+      - vendor/prim/rtl/prim_mubi_pkg.sv
+      - vendor/prim/rtl/prim_count_pkg.sv
+      - vendor/prim_generic/rtl/prim_ram_1p_pkg.sv
+      - rtl/ibex_pkg.sv
+      # --- prim cells ---
+      - vendor/prim_generic/rtl/prim_buf.sv
+      - vendor/prim_generic/rtl/prim_clock_gating.sv
+      - vendor/prim_generic/rtl/prim_clock_mux2.sv
+      - vendor/prim_generic/rtl/prim_flop.sv
+      - vendor/prim_generic/rtl/prim_ram_1p.sv
+      - vendor/prim/rtl/prim_count.sv
+      - vendor/prim/rtl/prim_lfsr.sv
+      - vendor/prim/rtl/prim_prince.sv
+      - vendor/prim/rtl/prim_subst_perm.sv
+      - vendor/prim/rtl/prim_ram_1p_adv.sv
+      - vendor/prim/rtl/prim_ram_1p_scr.sv
+      - vendor/prim/rtl/prim_secded_inv_22_16_dec.sv
+      - vendor/prim/rtl/prim_secded_inv_22_16_enc.sv
+      - vendor/prim/rtl/prim_secded_inv_28_22_dec.sv
+      - vendor/prim/rtl/prim_secded_inv_28_22_enc.sv
+      - vendor/prim/rtl/prim_secded_inv_39_32_dec.sv
+      - vendor/prim/rtl/prim_secded_inv_39_32_enc.sv
+      - vendor/prim/rtl/prim_secded_inv_hamming_22_16_dec.sv
+      - vendor/prim/rtl/prim_secded_inv_hamming_22_16_enc.sv
+      - vendor/prim/rtl/prim_secded_inv_hamming_39_32_dec.sv
+      - vendor/prim/rtl/prim_secded_inv_hamming_39_32_enc.sv
+      # --- ibex core ---
+      - rtl/ibex_alu.sv
+      - rtl/ibex_branch_predict.sv
+      - rtl/ibex_compressed_decoder.sv
+      - rtl/ibex_controller.sv
+      - rtl/ibex_counter.sv
+      - rtl/ibex_cs_registers.sv
+      - rtl/ibex_csr.sv
+      - rtl/ibex_decoder.sv
+      - rtl/ibex_dummy_instr.sv
+      - rtl/ibex_ex_block.sv
+      - rtl/ibex_fetch_fifo.sv
+      - rtl/ibex_icache.sv
+      - rtl/ibex_id_stage.sv
+      - rtl/ibex_if_stage.sv
+      - rtl/ibex_load_store_unit.sv
+      - rtl/ibex_multdiv_fast.sv
+      - rtl/ibex_multdiv_slow.sv
+      - rtl/ibex_pmp.sv
+      - rtl/ibex_prefetch_buffer.sv
+      - rtl/ibex_register_file_ff.sv
+      - rtl/ibex_register_file_fpga.sv
+      - rtl/ibex_register_file_latch.sv
+      - rtl/ibex_lockstep.sv
+      - rtl/ibex_wb_stage.sv
+      - rtl/ibex_core.sv
+      - rtl/ibex_top.sv
+    file_type: systemVerilogSource
+
+targets:
+  default:
+    filesets:
+      - rtl_includes
+      - rtl
+    toplevel: ibex_top
