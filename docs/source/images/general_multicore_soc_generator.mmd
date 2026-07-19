@@ -1,0 +1,50 @@
+flowchart TB
+  subgraph Intent["Design intent"]
+    direction LR
+    P["Design-class preset"]
+    B["Explicit PPA and behavior budgets"]
+    W["Workloads and operating points"]
+    E["Required evidence level"]
+  end
+
+  P --> R["Schema validation and profile resolution"]
+  B --> R
+  W --> R
+  E --> R
+  R --> IR["Normalized design-intent IR and search space"]
+
+  IR --> C{"Capability and feasibility solver"}
+
+  subgraph Catalogs["Versioned catalogs"]
+    direction LR
+    L["Logical IP capability catalog"]
+    H["Characterization and qualification catalog"]
+  end
+  L --> C
+  H --> C
+
+  subgraph Backends["Platform backends"]
+    direction LR
+    M["ULP and low-power MCU backend"]
+    K["Embedded cluster backend"]
+    A["Application-class backend"]
+  end
+  C -->|"Valid MCU system"| M
+  C -->|"Valid clustered system"| K
+  C -->|"Valid coherent system"| A
+  C -->|"Unsupported combination"| X["Fail closed with actionable reasons"]
+
+  M --> G["Resolve concrete SoC IR and generate RTL, firmware, SDC, UPF and manifest"]
+  K --> G
+  A --> G
+
+  G --> F["Functional, protocol and power-state verification"]
+  F --> T["Workload execution and activity capture"]
+  T --> Q["Synthesis, STA, power and physical qualification"]
+  Q --> O{"All requested budgets have bound evidence?"}
+  O -->|"Yes"| PASS["Qualified implementation point"]
+  O -->|"No"| DSE["Rejected candidate or Pareto trade-off report"]
+  DSE -.-> IR
+
+  AI["Agent: author intent, invoke tools and explain trade-offs"] -.-> R
+  AI -.-> DSE

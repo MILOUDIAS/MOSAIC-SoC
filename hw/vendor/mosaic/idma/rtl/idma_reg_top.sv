@@ -92,7 +92,7 @@ module idma_reg32_3d #(
     always_comb begin : proc_dma_backpressure
       // ready signal
       dma_ctrl_rsp_o[i]       = dma_ctrl_rsp[i];
-      dma_ctrl_rsp_o[i].ready = read_happens ? arb_ready[i] : dma_ctrl_rsp[i];
+      dma_ctrl_rsp_o[i].ready = read_happens ? arb_ready[i] : dma_ctrl_rsp[i].ready;
     end
 
     // valid signals
@@ -188,6 +188,4 @@ module idma_reg32_3d #(
     .data_o  ( dma_req_o   ),
     .idx_o   ( /* NC */    )
   );
-
 endmodule
-

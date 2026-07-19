@@ -17,6 +17,7 @@ module servile
     parameter [0:0] with_c = 1'b0,
     parameter [0:0] with_csr = 1'b0,
     parameter [0:0] with_mdu = 1'b0,
+    parameter [0:0] pre_register = 1'b1,
     //Internally calculated. Do not touch
     parameter	    B = width-1,
     parameter	    regs = 32+with_csr*4,
@@ -201,7 +202,7 @@ module servile
      #(
        .WITH_CSR       (with_csr?1:0),
        .W              (width),
-       .PRE_REGISTER   (1'b1),
+       .PRE_REGISTER   (pre_register),
        .RESET_STRATEGY (reset_strategy),
        .RESET_PC       (reset_pc),
        .DEBUG          (debug),

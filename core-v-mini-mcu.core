@@ -11,9 +11,6 @@ filesets:
   files_rtl_generic:
     depend:
     - x-heep::packages
-    - openhwgroup.org:ip:cv32e40p
-    - openhwgroup.org:ip:cv32e40x
-    - openhwgroup:cve2:cve2_top
     - pulp-platform.org:ip:gpio
     - pulp-platform.org::common_cells
     - pulp-platform.org::axi:0.39.8
@@ -27,7 +24,6 @@ filesets:
     - lowrisc:ip:spi_host:1.0
     - lowrisc:ip:i2c:0.1
     - yosyshq:picorv32_spimemio:0-r1
-    - x-heep:ip:cv32e40px
     - x-heep:ip:obi_spimemio
     - x-heep:ip:boot_rom
     - x-heep:ip:dma
@@ -46,16 +42,26 @@ filesets:
     - x-heep:ip:tdu
     # MOSAIC-SoC: iDMA (modular DMA engine, replaces x-heep simple DMA)
     - mosaic:ip:idma
-    # MOSAIC-SoC: FlooNoC fabric (bus: floonoc) — OBI<->AXI bridges + the
-    # vendored NoC library + the floogen-generated fabric top (stub files
-    # for non-floonoc configs)
-    - mosaic:ip:axi_obi
-    - mosaic:ip:floonoc_fabric
     files:
+    # FuseSoC otherwise exports the include files themselves without the
+    # parent search roots required by `include "idma/..." and "obi/...".
+    - hw/vendor/mosaic/idma/rtl/include/idma/typedef.svh:
+        is_include_file: true
+        include_path: hw/vendor/mosaic/idma/rtl/include
+    - hw/vendor/pulp_platform/obi/include/obi/typedef.svh:
+        is_include_file: true
+        include_path: hw/vendor/pulp_platform/obi/include
+    # core_v_mini_mcu imports these four APU sizing constants even when the
+    # selected CPU is not CV32E40P. Carry the tiny standalone package without
+    # importing the complete CV32E40P/fpnew implementation closure.
+    - hw/vendor/openhwgroup/cv32e40p/rtl/include/cv32e40p_apu_core_pkg.sv
+    # The x-heep top/testharness always expose the legacy CV-X-IF interface,
+    # including for cores that tie it off.  Keep only its type package and
+    # compatibility interface in the common closure, not the CV32E40X core.
+    - hw/vendor/openhwgroup/cv32e40x/rtl/include/cv32e40x_pkg.sv
+    - hw/vendor/openhwgroup/if_xif_compat.sv
     - hw/core-v-mini-mcu/core_v_mini_mcu.sv
     - hw/core-v-mini-mcu/cpu_subsystem.sv
-    - hw/core-v-mini-mcu/cve2_xif_wrapper.sv
-    - hw/core-v-mini-mcu/cv32e40px_xif_wrapper.sv
     - hw/core-v-mini-mcu/memory_subsystem.sv
     - hw/core-v-mini-mcu/xbar_varlat_one_to_n.sv
     - hw/core-v-mini-mcu/xbar_varlat_n_to_one.sv
@@ -65,6 +71,47 @@ filesets:
     - hw/core-v-mini-mcu/peripheral_subsystem.sv
     - hw/core-v-mini-mcu/ao_peripheral_subsystem.sv
     file_type: systemVerilogSource
+
+  # Native x-heep cores are selected per resolved MOSAIC config.  Keeping
+  # them out of files_rtl_generic prevents an Ibex-only config from also
+  # importing the CVE2/OpenTitan primitive closure (and vice versa).
+  files_rtl_native_legacy:
+    depend:
+    - openhwgroup.org:ip:cv32e40p
+    - openhwgroup.org:ip:cv32e40x
+    - openhwgroup:cve2:cve2_top
+    - x-heep:ip:cv32e40px
+    files:
+    - hw/core-v-mini-mcu/cve2_xif_wrapper.sv
+    - hw/core-v-mini-mcu/cv32e40px_xif_wrapper.sv
+    file_type: systemVerilogSource
+
+  files_rtl_cv32e20:
+    depend:
+    - openhwgroup:cve2:cve2_top
+    files:
+    - hw/core-v-mini-mcu/cve2_xif_wrapper.sv
+    file_type: systemVerilogSource
+
+  files_rtl_cv32e40p:
+    depend:
+    - openhwgroup.org:ip:cv32e40p
+
+  files_rtl_cv32e40px:
+    depend:
+    - x-heep:ip:cv32e40px
+    files:
+    - hw/core-v-mini-mcu/cv32e40px_xif_wrapper.sv
+    file_type: systemVerilogSource
+
+  files_rtl_cv32e40x:
+    depend:
+    - openhwgroup.org:ip:cv32e40x
+
+  files_rtl_floonoc:
+    depend:
+    - mosaic:ip:axi_obi
+    - mosaic:ip:floonoc_fabric
 
   # MOSAIC-SoC: Standard Core Interface (SCI) wrappers for heterogeneous
   # cores. Depends on the vendored FazyRV and SERV cores.
@@ -308,6 +355,14 @@ targets:
   default: &default_target
     filesets:
     - files_rtl_generic
+    - "!mosaic_configured? (files_rtl_native_legacy)"
+    - mosaic_cv32e20? (files_rtl_cv32e20)
+    - mosaic_cv32e40p? (files_rtl_cv32e40p)
+    - mosaic_cv32e40px? (files_rtl_cv32e40px)
+    - mosaic_cv32e40x? (files_rtl_cv32e40x)
+    - mosaic_configured? (files_rtl_mosaic_sci)
+    - "!mosaic_configured? (files_rtl_floonoc)"
+    - mosaic_floonoc? (files_rtl_floonoc)
     - target_sim ? (tool_verilator? (files_verilator_waiver))
     - target_sim_sc ? (tool_verilator? (files_verilator_waiver))
     toplevel: [core_v_mini_mcu]

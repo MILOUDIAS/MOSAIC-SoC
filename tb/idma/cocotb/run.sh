@@ -12,7 +12,11 @@ cd "$HERE"
 rc=0
 for top in idma_tb_top idma_soc_tb_top; do
   echo "### ===== iDMA cocotb: TOPLEVEL=$top ====="
-  rm -rf sim_build results.xml __pycache__
-  make SIM=verilator TOPLEVEL="$top" || rc=1
+  if [[ "$top" == "idma_tb_top" ]]; then
+    build_dir="sim_build_block"
+  else
+    build_dir="sim_build_soc"
+  fi
+  make SIM=verilator TOPLEVEL="$top" SIM_BUILD="$build_dir" || rc=1
 done
 exit $rc

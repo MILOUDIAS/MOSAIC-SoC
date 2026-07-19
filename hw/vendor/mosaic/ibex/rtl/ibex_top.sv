@@ -65,10 +65,10 @@ module ibex_top import ibex_pkg::*; #(
 
   // enable all clock gates for testing
   input  logic                                                         test_en_i,
-  input  prim_ram_1p_pkg::ram_1p_cfg_t                                 ram_cfg_icache_tag_i,
-  output prim_ram_1p_pkg::ram_1p_cfg_rsp_t [ibex_pkg::IC_NUM_WAYS-1:0] ram_cfg_rsp_icache_tag_o,
-  input  prim_ram_1p_pkg::ram_1p_cfg_t                                 ram_cfg_icache_data_i,
-  output prim_ram_1p_pkg::ram_1p_cfg_rsp_t [ibex_pkg::IC_NUM_WAYS-1:0] ram_cfg_rsp_icache_data_o,
+  input  prim_ram_1p_pkg::ram_1p_cfg_t               ram_cfg_icache_tag_i,
+  output logic [ibex_pkg::IC_NUM_WAYS-1:0]            ram_cfg_rsp_icache_tag_o,
+  input  prim_ram_1p_pkg::ram_1p_cfg_t               ram_cfg_icache_data_i,
+  output logic [ibex_pkg::IC_NUM_WAYS-1:0]            ram_cfg_rsp_icache_data_o,
 
   input  logic [31:0]                                                  hart_id_i,
   input  logic [31:0]                                                  boot_addr_i,
@@ -472,7 +472,7 @@ module ibex_top import ibex_pkg::*; #(
       .RV32E            (RV32E),
       .DataWidth        (RegFileDataWidth),
       .DummyInstructions(DummyInstructions),
-      .WordZeroVal      (RegFileDataWidth'(prim_secded_pkg::SecdedInv3932ZeroWord))
+      .WordZeroVal      (RegFileDataWidth'(ibex_pkg::IbexSecdedInv3932ZeroWord))
     ) register_file_i (
       .clk_i (clk),
       .rst_ni(rst_ni),
@@ -494,7 +494,7 @@ module ibex_top import ibex_pkg::*; #(
       .RV32E            (RV32E),
       .DataWidth        (RegFileDataWidth),
       .DummyInstructions(DummyInstructions),
-      .WordZeroVal      (RegFileDataWidth'(prim_secded_pkg::SecdedInv3932ZeroWord))
+      .WordZeroVal      (RegFileDataWidth'(ibex_pkg::IbexSecdedInv3932ZeroWord))
     ) register_file_i (
       .clk_i (clk),
       .rst_ni(rst_ni),
@@ -516,7 +516,7 @@ module ibex_top import ibex_pkg::*; #(
       .RV32E            (RV32E),
       .DataWidth        (RegFileDataWidth),
       .DummyInstructions(DummyInstructions),
-      .WordZeroVal      (RegFileDataWidth'(prim_secded_pkg::SecdedInv3932ZeroWord))
+      .WordZeroVal      (RegFileDataWidth'(ibex_pkg::IbexSecdedInv3932ZeroWord))
     ) register_file_i (
       .clk_i (clk),
       .rst_ni(rst_ni),
@@ -619,6 +619,11 @@ module ibex_top import ibex_pkg::*; #(
           .key_valid_i      (scramble_key_valid_q),
           .key_i            (scramble_key_q),
           .nonce_i          (scramble_nonce_q),
+          // x-heep's older shared primitive still exposes its optional
+          // random-initialization handshake; Ibex does not use it.
+          .init_seed_i      ('0),
+          .init_req_i       (1'b0),
+          .init_ack_o       (),
 
           .req_i            (ic_tag_req[way]),
 
@@ -634,11 +639,7 @@ module ibex_top import ibex_pkg::*; #(
           .raddr_o          (),
           .rerror_o         (),
           .cfg_i            (ram_cfg_icache_tag_i),
-          .cfg_rsp_o        (ram_cfg_rsp_icache_tag_o[way]),
-          .wr_collision_o   (),
-          .write_pending_o  (),
-
-          .alert_o          (icache_tag_alert[way])
+          .intg_error_o     (icache_tag_alert[way])
         );
 
         // Data RAM instantiation
@@ -657,6 +658,9 @@ module ibex_top import ibex_pkg::*; #(
           .key_valid_i      (scramble_key_valid_q),
           .key_i            (scramble_key_q),
           .nonce_i          (scramble_nonce_q),
+          .init_seed_i      ('0),
+          .init_req_i       (1'b0),
+          .init_ack_o       (),
 
           .req_i            (ic_data_req[way]),
 
@@ -672,11 +676,7 @@ module ibex_top import ibex_pkg::*; #(
           .raddr_o          (),
           .rerror_o         (),
           .cfg_i            (ram_cfg_icache_data_i),
-          .cfg_rsp_o        (ram_cfg_rsp_icache_data_o[way]),
-          .wr_collision_o   (),
-          .write_pending_o  (),
-
-          .alert_o          (icache_data_alert[way])
+          .intg_error_o     (icache_data_alert[way])
         );
 
         `ifdef INC_ASSERT
@@ -718,7 +718,6 @@ module ibex_top import ibex_pkg::*; #(
           .DataBitsPerMask  (TagSizeECC)
         ) tag_bank (
           .clk_i,
-          .rst_ni,
 
           .req_i       (ic_tag_req[way]),
 
@@ -728,8 +727,7 @@ module ibex_top import ibex_pkg::*; #(
           .wmask_i     ({TagSizeECC{1'b1}}),
 
           .rdata_o     (ic_tag_rdata[way]),
-          .cfg_i       (ram_cfg_icache_tag_i),
-          .cfg_rsp_o   (ram_cfg_rsp_icache_tag_o[way])
+          .cfg_i       (ram_cfg_icache_tag_i)
         );
 
         // Data RAM instantiation
@@ -739,7 +737,6 @@ module ibex_top import ibex_pkg::*; #(
           .DataBitsPerMask    (LineSizeECC)
         ) data_bank (
           .clk_i,
-          .rst_ni,
 
           .req_i       (ic_data_req[way]),
 
@@ -749,14 +746,19 @@ module ibex_top import ibex_pkg::*; #(
           .wmask_i     ({LineSizeECC{1'b1}}),
 
           .rdata_o     (ic_data_rdata[way]),
-          .cfg_i       (ram_cfg_icache_data_i),
-          .cfg_rsp_o   (ram_cfg_rsp_icache_data_o[way])
+          .cfg_i       (ram_cfg_icache_data_i)
         );
 
         assign icache_tag_alert  = '{default:'b0};
         assign icache_data_alert = '{default:'b0};
       end
     end
+
+    // The shared x-heep RAM primitive predates per-macro configuration
+    // response ports.  Configuration requests are unused by the SCI wrapper,
+    // so report the quiescent response expected by its open outputs.
+    assign ram_cfg_rsp_icache_tag_o  = '0;
+    assign ram_cfg_rsp_icache_data_o = '0;
 
   end else begin : gen_norams
 

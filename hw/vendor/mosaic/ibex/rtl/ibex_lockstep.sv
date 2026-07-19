@@ -123,7 +123,7 @@ module ibex_lockstep import ibex_pkg::*; #(
   output logic [31:0]                  instr_addr_shadow_o
 );
 
-  import prim_secded_pkg::SecdedInv3932ZeroWord;
+  import ibex_pkg::IbexSecdedInv3932ZeroWord;
 
   localparam int unsigned LockstepOffsetW = prim_util_pkg::vbits(LockstepOffset);
   // Core outputs are delayed for an extra cycle due to shadow output registers
@@ -583,7 +583,7 @@ module ibex_lockstep import ibex_pkg::*; #(
       .RV32E            (RV32E),
       .DataWidth        (RegFileDataEccWidth - RegFileDataWidth),
       .DummyInstructions(DummyInstructions),
-      .WordZeroVal      (SecdedInv3932ZeroWord[RegFileDataEccWidth-1:RegFileDataWidth])
+      .WordZeroVal      (IbexSecdedInv3932ZeroWord[RegFileDataEccWidth-1:RegFileDataWidth])
     ) register_file_shadow_i (
       .clk_i            (clk_i),
       .rst_ni           (rst_shadow_n),
@@ -605,7 +605,7 @@ module ibex_lockstep import ibex_pkg::*; #(
       .RV32E            (RV32E),
       .DataWidth        (RegFileDataEccWidth - RegFileDataWidth),
       .DummyInstructions(DummyInstructions),
-      .WordZeroVal      (SecdedInv3932ZeroWord[RegFileDataEccWidth-1:RegFileDataWidth])
+      .WordZeroVal      (IbexSecdedInv3932ZeroWord[RegFileDataEccWidth-1:RegFileDataWidth])
     ) register_file_shadow_i (
       .clk_i            (clk_i),
       .rst_ni           (rst_shadow_n),
@@ -627,7 +627,7 @@ module ibex_lockstep import ibex_pkg::*; #(
       .RV32E            (RV32E),
       .DataWidth        (RegFileDataEccWidth - RegFileDataWidth),
       .DummyInstructions(DummyInstructions),
-      .WordZeroVal      (SecdedInv3932ZeroWord[RegFileDataEccWidth-1:RegFileDataWidth])
+      .WordZeroVal      (IbexSecdedInv3932ZeroWord[RegFileDataEccWidth-1:RegFileDataWidth])
     ) register_file_shadow_i (
       .clk_i            (clk_i),
       .rst_ni           (rst_shadow_n),

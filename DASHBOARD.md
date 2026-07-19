@@ -1,36 +1,43 @@
 # MOSAIC-SoC Progress Dashboard
 
-> **IEEE SSCS Chipathon 2026 · Track D · GF180MCU · Updated: 2026-07-10**
+> **IEEE SSCS Chipathon 2026 · Track D · GF180MCU · Updated: 2026-07-19**
 
 ---
 
 ## 1. At a Glance
 
 ```
-PHASE 1 — Config-Driven Multi-Core Generator   █████████████████████  98%
-PHASE 2 — Agentic Harness (oh-my-soc)          ████████████████████░  85%
+PHASE 1 — Config-Driven Multi-Core Generator   █████████████████████  99%
+PHASE 2 — Agentic Harness (oh-my-soc)          █████████████████████  99%
 PHASE 3 — Physical Design (GF180MCU)           ██████░░░░░░░░░░░░░░░  30%
-OVERALL                                        ████████████████░░░░  80%
+OVERALL                                        ████████████████░░░░  81%
 ```
 
-**Headline:** the production C firmware runs end-to-end on the full 7-hart PoC SoC —
-`tb/mosaic_soc/run_fw.sh` → **EXIT SUCCESS** (TITAN dispatches 6 TDU tasks, all workers
-pop unique descriptors, compute, and report). The TDU wake-and-run demo passes on **all
-three bus fabrics** (`obi`, `log`, `floonoc`).
+**Headline:** the SoC now boots the production path **flash-only** — boot ROM → SPI-XIP
+TITAN → CRC-checked worker loading → 6-worker TDU dispatch → **EXIT SUCCESS** — on top of
+a hardened generator (strict shared core registry, heterogeneous per-hart RTL, topology-
+derived firmware/linkers/flash manifests, content-addressed builds, fail-closed `target:
+tapeout`). The harness gained a **built-in agent runtime** (bounded model/tool loop with
+approval gates + evidence binding), and a beginner `tutorial/` walks the whole stack.
 
 | Metric | Value |
 |--------|-------|
 | Bugs found & fixed | 21 (see [Bug Tracker](#7-bug-tracker-all-fixed)) |
-| Core IPs integrated | 9 / 9 (cv32e20, cv32e40x, cva6†, ibex, fazyrv, picorv32, qerv, serv, snitch) — †sim-only |
-| SCI wrappers | 6 (fazyrv, serv, ibex, picorv32, snitch, cva6 — qerv reuses serv) |
+| Core IPs integrated | 12 / 12 (cv32e20, cv32e40x, cva6†, ibex, fazyrv, hazard3, picorv32, qerv, serv, snitch, rocket†, boom†) — †sim-only |
+| SCI wrappers | 9 (fazyrv, serv, ibex, picorv32, snitch, cva6, rocket, boom, hazard3 — qerv reuses serv) |
 | Bus fabrics | 3 (OBI crossbar · logarithmic interconnect · FlooNoC) |
-| Test suites | 11, all green (see below) |
+| Test suites | 16 suite rows below, all green (26-step sweep + Jul 13 hardening re-verify + tb-matrix coverage) |
+| Harness skills | 10 + built-in agent runtime (`./oh-my-soc` executable, omp-style driver picker, `oh-my-soc agent` dispatch; cards in `.claude/skills/` for Claude Code + omp) |
 | Firmware size | 1,592 B text (production) · 2,440 B text (sched demo) |
-| Commits | 19 on `main` history (+ `dev-mld` in flight) |
+| Commits | 39 on `true-multicore-generator` (Phase-2 harness + hardening sprints landed Jul 12–17) |
 
 ### What passes today
 
-Last full sweep: **2026-07-11** (18-step, after the picorv32/snitch/cva6 additions) — all green.
+Last full sweep: **2026-07-12** (26-step, after the Phase-2 harness + Hazard3
+additions: +wake-demo-hazard3, +soc-from-prompt no-LLM pipeline, +tb-sci
+single-hart TBs) — all green. The **2026-07-13 generator-hardening pass**
+re-verified the canonical 7-hart, 607-file full-SoC run, the flash-only
+production boot, and the complete pytest suite on top of it.
 
 | Suite | Command | Proves | Result |
 |-------|---------|--------|--------|
@@ -44,7 +51,12 @@ Last full sweep: **2026-07-11** (18-step, after the picorv32/snitch/cva6 additio
 | **Production firmware** | `tb/mosaic_soc/run_fw.sh` | C firmware on the 7-hart PoC: TDU driver, task-pop protocol, completion poll | EXIT SUCCESS |
 | All-TITAN SMP ×3 fabrics | `MOSAIC_CFG=… tb/mosaic_soc/run_titan.sh` | 2×cv32e20 + 2×cv32e40x free-running SMP, atomic TDU dequeue | EXIT SUCCESS ×3 |
 | New-core wake demos | `MOSAIC_CFG=configs/mosaic_{picorv32,snitch,cva6,new_cores}.yaml tb/mosaic_soc/run.sh` | picorv32, snitch, cva6 (sim-only) each boot/wake/execute; combined config runs all three together | EXIT SUCCESS ×4 |
-| Generator pytests | `pytest test/test_x_heep_gen` | config seam, bus-type mapping/validation, topo-viz | 15+ pass |
+| TL→OBI bridge unit TB | `tb/tl_obi/run.sh` | TileLink-C Acquire/Release/Get/Put, window translation, denied, bursts | 21/21 |
+| Berkeley RV64 wake demos | `MOSAIC_CFG=configs/mosaic_{rocket,boom,berkeley}.yaml tb/mosaic_soc/run.sh` | Rocket + BOOM v3 tiles (sim-only) boot through the DRAM alias, write sentinels through the uncached CLINT window; combined config runs both in ONE build | EXIT SUCCESS ×3 |
+| Generic per-hart boot TB | `tb/mosaic_soc/run_generic.sh` | consumes generated boot metadata, builds ABI-correct per-image firmware (mixed RV32E/RV32/RV64), requires **every** configured hart to report | EXIT SUCCESS |
+| tb-matrix combination coverage | `./oh-my-soc tb-matrix run --tier {validate,render,sim}` | the integration SPACE: 248-config pairwise covering array (validate), mcu-gen render, all-hart liveness on curated corners | 248/248 validate; 3 sim EXIT SUCCESS incl. 2 never-tested combos (2026-07-19) |
+| Flash-only production boot | `tb/mosaic_soc/run_fw.sh` (flash path) | boot ROM → SPI-XIP TITAN → CRC-checked worker loading → 6-worker TDU dispatch, no sim-side memory preload | EXIT SUCCESS |
+| Generator + harness pytests | `pytest test/test_x_heep_gen -m "not slow"` | config registry, per-hart RTL gen, software gen, build manifests, target capabilities, harness skills, agent runtime, tb-matrix coverage | **439 pass** (2026-07-19) |
 
 ---
 
@@ -62,6 +74,8 @@ M8:  Scheduling modes demo             █████████████�
 M9:  oh-my-soc agentic harness         ████████████████████  DONE     (Jun 30)
 M10: Multi-fabric bus (log + FlooNoC)  ████████████████████  DONE     (Jul 09)
 M11: Production firmware full-SoC sim  ████████████████████  DONE     (Jul 09)
+M15: Harness v2 + Hazard3 integration  ████████████████████  DONE     (Jul 12)
+M16: Generator hardening + flash boot  ████████████████████  DONE     (Jul 13)
 M12: LibreLane pin-binding + SRAM      ████░░░░░░░░░░░░░░░░  IN PROG
 M13: DRC/LVS clean signoff             ░░░░░░░░░░░░░░░░░░░░  PLANNED
 M14: Tapeout-ready GDSII               ░░░░░░░░░░░░░░░░░░░░  PLANNED
@@ -100,7 +114,7 @@ the Done log below as D-32..45 and D-60.
 
 ### Done — by area
 
-Sixty deliverables, grouped by area. IDs are stable (referenced elsewhere in the repo).
+Seventy-eight deliverables, grouped by area. IDs are stable (referenced elsewhere in the repo).
 
 **Config system & RTL generation**
 
@@ -167,6 +181,18 @@ Sixty deliverables, grouped by area. IDs are stable (referenced elsewhere in the
 | D-64 | Snitch bare-core integration (mempool flavor; instr refill + TCDM reqrsp → split OBI; X-poison + fork-fpnew divergences patched) | `hw/vendor/mosaic/snitch/`, `hw/sci/snitch_sci.sv` | `mosaic_snitch.yaml` wake demo EXIT SUCCESS (2 snitch workers) |
 | D-65 | CVA6 32-bit **sim-only** integration (cv32a65x-derived MOSAIC config: uncached D-side, NonIdempotent periph PMA, WT cache, CVXIF off; burst-capable 64→32 AXI→OBI bridge) | `hw/vendor/mosaic/cva6/`, `hw/vendor/mosaic/axi_obi/xheep_axi_burst_to_obi.sv`, `hw/sci/cva6_sci.sv` | `mosaic_cva6.yaml` wake demo EXIT SUCCESS (cva6 TITAN orchestrates TDU); tapeout exclusion stands |
 | D-66 | Combined new-cores demo: cva6 TITAN + snitch ATLAS + picorv32 NANO in one SoC | `configs/mosaic_new_cores.yaml` | EXIT SUCCESS — CVA6 wakes both workers via the TDU, per-slot sentinels verified (Verilator 5.050) |
+| D-67 | TileLink-C→OBI window bridge (Acquire/GrantData/GrantAck refills, Release(Data) writebacks, uncached Get/Put; DRAM-alias code window + uncached CLINT→sentinel / PLIC→TDU windows) | `hw/vendor/mosaic/tl_obi/xheep_tilelink_to_obi.sv`, `tb/tl_obi/` | Self-checking unit TB 21/21 (Verilator 5.050) |
+| D-68 | Rocket + BOOM v3 (RV64, **sim-only**) tile extraction: one chipyard 1.14.0 hetero elaboration (`MosaicRocketBoomConfig`, JDK17 + firtool 1.75.0), 299-module closure vendored with automated RESET_VECTOR re-parameterization | `hw/vendor/mosaic/berkeley/` (extract_tile_closure.py, MosaicConfigs.scala), `hw/sci/{rocket,boom}_sci.sv` | `mosaic_rocket.yaml` + `mosaic_boom.yaml` wake demos EXIT SUCCESS (2 RV64 workers each); tapeout exclusion stands |
+| D-69 | Combined Berkeley demo: cv32e20 TITAN + Rocket ATLAS + BOOM NANO in ONE Verilator build (single-elaboration namespace — no module collisions) | `configs/mosaic_berkeley.yaml` | EXIT SUCCESS — TDU wakes both RV64 tiles; sentinels land at 0x3004/0x3008 through the uncached CLINT window |
+| D-70 | oh-my-soc Phase-2 harness completed: 8 skills (config-author/wake-demo, **soc-from-prompt** deterministic NL grammar + gated pipeline, flow-runner ×18 flows with EXIT SUCCESS gates, **wrapper-smith**, **tb-smith**, drc-triage, doc-gen, topo-viz); registries AST-single-sourced; shared `.claude/skills/` cards (Claude Code + omp) + `.omp/tools/` shim; fixed 3 live harness bugs (missing subprocess import, broken config argv, `"no EXIT SUCCESS"` substring false-positive) | `harness/`, `.claude/skills/`, `.omp/tools/oh-my-soc.ts` | `soc-from-prompt run "<prompt>" --run` → wake demo **EXIT SUCCESS** (no LLM); pytest 116 |
+| D-71 | wrapper-smith mechanism: port-parse ladder (verible→yosys→regex), 9-family weighted classifier, clone-proven scaffold of all 8 integration touchpoints (idempotent, marker-guarded, dry-run first) | `harness/skills/wrapper_smith.py`, `harness/templates/wrapper/` | Ground-truth corpus: all integrated cores classify correctly (≥0.94 conf); picorv32 regen-diff = provenance banner only |
+| D-72 | **Hazard3 (RP2350 core) integrated BY the mechanism**: analyze → ahb_split @ 1.00 (new family, real AHB→OBI template) → scaffold (45 files + 5 edits) → agent-fill (63-port map, irq/boot/tie-offs) → tb-smith TB PASS (229 cycles) → wake demo | `hw/vendor/mosaic/hazard3/` (@ 8af99293, Apache-2.0), `hw/sci/hazard3_sci.sv`, `configs/mosaic_hazard3.yaml`, `tb/sci/hazard3/` | Full-SoC TDU wake demo **EXIT SUCCESS**; tapeout-eligible |
+| D-73 | GitHub-core completion + executable UX: `wrapper-smith fetch <url>[@commit]` (pinned clone, license detect w/ GPL gate, provenance → vendored .core header), auto sci.core `depend:` edge (only with a vendor .core — no dangling VLNVs) + post-apply FuseSoC-graph smoke; `./oh-my-soc` launcher + pyproject console script; omp-style driver picker (`setup`: deterministic/claude/omp/api, keys never stored) + `agent` dispatch + optional `--llm` intent translation (anthropic/openai-compatible, grammar fallback) | `harness/` (llm.py, skills/setup_wizard.py), `oh-my-soc`, `pyproject.toml` | pytest **128**; fetch/scaffold/depend/smoke verified live on hazard3; wake demo re-PASS |
+| D-74 | **Generator hardening** (2026-07-13): strict shared core registry (topology/ISA/core params/boot layout/sim-only/target capabilities), heterogeneous per-hart RTL gen (OBI masters, boot addrs, reset/wake/park, IRQs, debug masks, PLIC contexts, CLINT state, TDU routing, iDMA ports), topology-derived fw headers + linkers + startup contracts + flash manifests + authenticated cold boot, content-addressed isolated builds (source hashing, drift rejection, snapshot FuseSoC staging), **fail-closed `target: tapeout`** (only the canonical GF180 7-hart PoC, requires real bound RTL + SRAM views); unsupported combos rejected explicitly | `util/xheep_gen/{core_registry,build_manifest,software_gen,pack_flash,plic_gen}.py`, `mcu_gen.py` | 249 pytests; canonical 7-hart **607-file** full-SoC run EXIT SUCCESS; **flash-only production boot** (boot ROM → SPI-XIP → CRC worker load → 6-worker dispatch) EXIT SUCCESS; generated startup compiles under RV32E |
+| D-75 | **Built-in agent runtime**: bounded model/tool/replanning loop with typed tools, approval gates, evidence tracking + failure recovery; live terminal events, journals, streaming subprocess output, omp-style incremental tool cards; streaming Anthropic + OpenAI-compatible tool adapters; `tb-soc-generic` flow (generated boot metadata → ABI-correct per-image firmware, every configured hart must report before EXIT SUCCESS); integration completion bound to **fresh** evidence (analysis + apply + FuseSoC smoke + unit TB PASS + generic full-SoC run — stale evidence disqualified) | `harness/{agent,agent_tools,events,llm}.py`, `harness/EVALUATION.md`, `tb/mosaic_soc/{run_generic.sh,prog_generic/}` | `test_agent_runtime.py` suite; before/after documented in EVALUATION.md; mixed RV32E/RV32/RV64 image + TB PASS/watchdog-race fixes |
+| D-76 | Beginner tutorial: generator → harness → opencode/go walkthroughs, troubleshooting guide, verified config, executable end-to-end script, build-manifest inspector | `tutorial/` (01-generator, 02-harness, 03-opencode-go, run_all.sh, configs/tutorial_soc.yaml, inspect_manifest.py) | `tutorial/run_all.sh` runs clean; + `mosaic_{rocket,boom}_titan.yaml` configs |
+| D-77 | General multicore SoC generator roadmap — proposition for a next-generation generator architecture | `docs/general_multicore_soc_generator_roadmap.md` (+ `docs/source/images/general_multicore_soc_generator.{mmd,svg,png}`) | Doc + diagram committed (Jul 17); team decision pending |
+| D-78 | **tb-matrix skill — combination-coverage testing of the SoC integration space** (branch `tb-matrix`): axes derived live from `core_registry.py` (cores × roles × counts × second-worker heterogeneity × ISA/param variants × bus × sched mode × SRAM × peripherals × topology shape); deterministic greedy **pairwise covering array** (248 configs — every legal value pair covered, 68 illegal pairs reported *blocked with reason*); curated 30-config sim boundary set; tiered gates validate → mcu-gen render → `run_generic.sh` all-hart liveness, crash-safe resume in `build/tb_matrix/report.json`; wired into CLI, agent runtime (`tb_matrix_plan`/`tb_matrix_run`), omp shim + skill card | `harness/skills/tb_matrix.py`, `.claude/skills/tb-matrix/`, `test/test_x_heep_gen/test_tb_matrix.py` | validate tier 248/248 pass; 1 render pass; first sim-tier config (cv32e20 TITAN + **BOOM RV64 worker**) **EXIT SUCCESS** in 183 s; pytest **439** (28 new: pair-coverage proof, oracle validity of every synthesized config, registry-growth sync) |
 
 **Firmware**
 
@@ -223,6 +249,9 @@ Sixty deliverables, grouped by area. IDs are stable (referenced elsewhere in the
 | **SERV (NANO)** | Vendored | `serv_sci.sv` | cocotb + fw sim | `cpu_subsystem` | DONE |
 | **QERV (NANO)** | Reuses SERV | `serv_sci.sv` (W=4) | Elaborates | `cpu_subsystem` | DONE |
 | **Ibex (TITAN)** | Vendored | `ibex_sci.sv` | Lint-clean | `cpu_subsystem` | DONE |
+| **Hazard3 (ATLAS/NANO)** | Vendored `8af99293` (Apache-2.0) | `hazard3_sci.sv` (AHB-Lite→OBI) | unit TB PASS + full-SoC wake demo | `cpu_subsystem` (integrated BY wrapper-smith) | DONE — tapeout-eligible |
+| **Rocket (ATLAS, sim-only)** | Vendored chipyard 1.14 tile closure | `rocket_sci.sv` (TL-C→OBI) | Full-SoC wake demo | `cpu_subsystem` | DONE (sim) — excluded from tapeout |
+| **BOOM v3 (NANO, sim-only)** | Vendored chipyard 1.14 tile closure | `boom_sci.sv` (TL-C→OBI) | Full-SoC wake demo | `cpu_subsystem` | DONE (sim) — excluded from tapeout |
 | **TDU** | `tdu.sv` | N/A | 22/22 unit + SoC | `ao_peripheral` | DONE |
 | **iDMA** | `idma_xheep_wrapper.sv` | N/A | cocotb PASS (2) | `ao_peripheral` | DONE |
 | **Bus fabric — obi** | `system_xbar.sv.tpl` | N/A | wake demo + fw sim | Top-level | DONE |
@@ -230,7 +259,7 @@ Sixty deliverables, grouped by area. IDs are stable (referenced elsewhere in the
 | **Bus fabric — floonoc** | floogen + `axi_obi` bridges | N/A | bridge/NoC cocotb + wake demo | Top-level | DONE |
 | **TITAN firmware** | `titan_main.c` | `tdu.{h,c}` | Full-SoC EXIT SUCCESS | `sw/firmware/` | DONE |
 | **Sched demo** | `titan_scheduling_demo.c` | `tdu.{h,c}` | Builds clean, 3 modes | `sw/firmware/` | DONE |
-| **oh-my-soc** | `harness/` | 5 skills + CLI | pytest + CLI smoke | `harness/skills/` | DONE |
+| **oh-my-soc** | `harness/` | 10 skills + agent runtime + `./oh-my-soc` CLI | pytest + live hazard3 fetch→scaffold→TB→wake proof | `harness/` | DONE |
 | **PLIC** | OpenTitan IP | N/A | Single-target | `peripheral` | PARTIAL |
 | **Power mgr** | x-heep IP | N/A | Single-domain | `ao_peripheral` | PARTIAL |
 | **LibreLane flow** | `chip_top.sv` | `mosaic_soc_core.sv` | — | Flow wired | PARTIAL |
@@ -292,34 +321,58 @@ FreeRTOS tasks; the bare-metal poll loop can be wrapped in `xTaskCreate()` +
 
 ```
 harness/
-├── __main__.py              # CLI: python -m harness <skill> <cmd>
-├── core.py                  # SkillResult, validate_config, run_cmd, config I/O
+├── __main__.py              # CLI: ./oh-my-soc <skill> <cmd> (also python -m harness)
+├── core.py                  # SkillResult, registry-synced validation, run_cmd, config I/O
+├── agent.py                 # Built-in agent runtime: bounded model/tool/replanning loop,
+│                            #   typed tools, approval gates, evidence binding
+├── agent_tools.py           # Typed tool registry exposed to the agent loop
+├── events.py                # Live terminal events, journals, streaming subprocess output
+├── llm.py                   # Streaming Anthropic + OpenAI-compatible tool adapters
+├── EVALUATION.md            # Before/after evaluation of the agent runtime
 └── skills/
-    ├── config_author.py     # Generate/validate mosaic.yaml, 3 presets
-    ├── flow_runner.py       # 11 EDA flows, structured log parsing
+    ├── config_author.py     # Generate/validate mosaic.yaml, presets, wake-demo configs
+    ├── soc_from_prompt.py   # Prompt→SoC: NL grammar + gated pipeline (no-LLM fallback)
+    ├── flow_runner.py       # 19 EDA/sim flows, EXIT SUCCESS gates, structured log parsing
+    ├── wrapper_smith.py     # fetch/analyze/classify/scaffold any open-source core
+    ├── tb_smith.py          # Generated self-checking single-hart TBs + wake demo
+    ├── tb_matrix.py         # Combination coverage: registry axes → pairwise array → tiered gates
     ├── drc_triage.py        # Magic/KLayout/Netgen parsers, fix suggestions
     ├── doc_gen.py           # Config summary, memory map, run reports
-    └── topo_viz.py          # Config checks + interactive bus-topology HTML
+    ├── topo_viz.py          # Config checks + interactive bus-topology HTML
+    └── setup_wizard.py      # First-run driver picker (deterministic/claude/omp/api)
 ```
 
 **Design principle:** the agent *assists and is checked by* deterministic tooling. It
-never replaces signoff.
+never replaces signoff. The built-in runtime enforces this structurally: integration
+completion is bound to **fresh** evidence (current analysis, apply, FuseSoC smoke,
+unit-TB PASS, generic full-SoC run) — stale or unrelated evidence never qualifies.
 
 | Skill | Input → Output | Key feature |
 |-------|---------------|-------------|
-| `config-author` | NL intent → `mosaic.yaml` | 3 presets (poc/minimal/max_cores), schema validation |
-| `flow-runner` | Config → EDA run + summary | 11 flows, timing, structured log parsing |
+| `soc-from-prompt` | NL request → validated SoC + sim | Gated pipeline: config → topo check → mcu-gen render → wake demo EXIT SUCCESS; deterministic grammar, optional `--llm` |
+| `config-author` | Intent → `mosaic.yaml` | Presets + wake-demo configs, registry-synced schema validation |
+| `wrapper-smith` | Core RTL (or GitHub URL) → SCI integration | fetch w/ license gate + provenance, 9-family classifier, 8-touchpoint scaffold, FuseSoC smoke |
+| `tb-smith` | Wrapped core → verified core | Generated self-checking TB (dormancy/wake/sentinel) + full-SoC wake demo gate |
+| `tb-matrix` | Registry axes → tested integration space | Pairwise covering array (blocked pairs reported w/ reason) + curated sim corners; validate/render/sim tiers, resumable report |
+| `flow-runner` | Config → EDA run + summary | 19 flows, EXIT SUCCESS gates, timing, structured log parsing |
 | `drc-triage` | DRC/LVS report → fix suggestions | 3 format parsers, severity classification |
 | `doc-gen` | Artifacts → documentation | Config summary, memory map, run reports |
 | `topo-viz` | Config → semantic checks + topology HTML | Per-fabric rendering (obi/log/floonoc), self-contained SVG+JS |
+| `setup` | First run → driver config | deterministic/claude/omp/api; API keys never stored (env-var name only) |
 
 ```bash
-python -m harness config-author generate --preset poc --name my_soc
-python -m harness flow-runner run firmware-build
-python -m harness drc-triage analyze report.rpt
-python -m harness doc-gen memory-map
-python -m harness topo-viz render mosaic.yaml -o topology.html
+./oh-my-soc setup                                  # first-run driver picker
+./oh-my-soc agent "a cv32e20 controller with two picorv32 workers and a uart"
+./oh-my-soc soc-from-prompt run "..." --run        # same pipeline, deterministic, no LLM
+./oh-my-soc wrapper-smith fetch https://github.com/Wren6991/Hazard3@<commit>
+./oh-my-soc wrapper-smith analyze <top.sv> && ./oh-my-soc wrapper-smith scaffold <core> --apply
+./oh-my-soc tb-smith generate <core> && ./oh-my-soc tb-smith wake-demo <core>
+./oh-my-soc tb-matrix run --tier validate && ./oh-my-soc tb-matrix run --tier sim --limit 5
 ```
+
+Agent surfaces: shared skill cards in `.claude/skills/` (read by Claude Code **and**
+oh-my-pi), the `.omp/tools/oh-my-soc.ts` tool shim with incremental tool cards, and the
+built-in `oh-my-soc agent` runtime for API-driven sessions.
 
 ---
 
@@ -372,3 +425,4 @@ python -m harness topo-viz render mosaic.yaml -o topology.html
 3. **Generate SRAM macros** (P-03) — run OpenRAM with the GF180 PDK to produce 4KB/32KB GDS/LEF/LIB
 4. **DRC/LVS signoff + STA** (N-06/N-07) — full LibreLane flow with the GF180 PDK, 50 MHz closure
 5. **Scheduling demo in full-SoC sim** — run `mosaic_demo.hex` through the `run_fw.sh` flow (currently build-verified only)
+6. **Decide on the next-gen generator roadmap** — review the proposition in `docs/general_multicore_soc_generator_roadmap.md` (D-77) and accept/defer/reject as a team

@@ -10,7 +10,7 @@ matter at the SoC integration level:
 
 Register offsets (tdu_pkg): CORE_STATUS=0x00, SCHED_MODE=0x04, WAKE_MASK=0x08,
 WAKE_REQ=0x0C, TASK_PUSH=0x10, TASK_POP=0x14, TASK_STATUS=0x18,
-ENERGY_COUNTER=0x1C, CPI_EST_BASE=0x20.
+    ENERGY_COUNTER=0x1C, CPI_EST_BASE=0x20, PARK_REQ=0x60.
 """
 
 import cocotb
@@ -25,6 +25,7 @@ WAKE_REQ = TDU_BASE + 0x0C
 TASK_PUSH = TDU_BASE + 0x10
 TASK_POP = TDU_BASE + 0x14
 TASK_STATUS = TDU_BASE + 0x18
+PARK_REQ = TDU_BASE + 0x60
 
 SCHED_DYNAMIC = 1
 
@@ -123,11 +124,35 @@ async def tdu_soc_level(dut):
         fails += 1
         dut._log.error("no wake pulse on hart 2")
 
-    # 4) CORE_STATUS reflects injected core_sleep.
+    # 4) PARK_REQ -> targeted park pulse for a completed worker.
+    seen_park = 0
+    dut.reg_addr_i.value = PARK_REQ
+    dut.reg_wdata_i.value = 1 << 3
+    dut.reg_write_i.value = 1
+    dut.reg_valid_i.value = 1
+    for _ in range(6):
+        await RisingEdge(dut.clk_i)
+        seen_park |= int(dut.core_park_o.value)
+        if int(dut.reg_ready_o.value) == 1:
+            dut.reg_valid_i.value = 0
+            dut.reg_write_i.value = 0
+    dut.reg_valid_i.value = 0
+    dut.reg_write_i.value = 0
+    if seen_park != (1 << 3):
+        fails += 1
+        dut._log.error(f"wrong park pulse: got 0x{seen_park:x}, expected hart 3")
+
+    # 5) CORE_STATUS reflects injected core_sleep.
     dut.core_sleep_i.value = 0b0001010  # harts 1 and 3 asleep
     await ClockCycles(dut.clk_i, 3)
     cs = await reg_read(dut, CORE_STATUS)
     dut._log.info(f"CORE_STATUS = 0x{cs:08x} (injected sleep = 0x0a)")
+    # Integration top mirrors running=~sleep, so low 16 bits are 0x75.
+    if cs != 0x000A0075:
+        fails += 1
+        dut._log.error(
+            f"CORE_STATUS ABI mismatch: got 0x{cs:08x}, expected 0x000a0075"
+        )
 
     dut._log.info(f"=== TDU SoC-level test: {fails} failure(s) ===")
     assert fails == 0, f"{fails} SoC-level TDU check(s) failed"

@@ -1,0 +1,39 @@
+# Packaging for the oh-my-soc harness ONLY (the RTL generator keeps its own
+# flow: make venv + util/python-requirements.txt). Install into the project
+# venv for a PATH entry point:
+#
+#   .venv/bin/python -m pip install -e .
+#   oh-my-soc config-author presets
+#
+# The ./oh-my-soc launcher works without any install.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oh-my-soc"
+version = "0.3.0"
+description = "MOSAIC-SoC agentic harness: visible model/tool loop over deterministic EDA gates"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML",
+    "Mako",
+]
+
+[project.scripts]
+oh-my-soc = "harness.__main__:main"
+
+[tool.setuptools]
+# ONLY the harness package — never auto-discover util/, test/, refs/ as
+# packages (they are not part of the app).
+packages = ["harness", "harness.skills"]
+
+[tool.setuptools.package-data]
+# family heuristics + wrapper/tb templates ship with the package
+harness = ["templates/**/*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: regression that builds or runs an RTL simulator",
+]

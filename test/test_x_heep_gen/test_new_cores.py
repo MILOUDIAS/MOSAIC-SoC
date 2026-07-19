@@ -46,7 +46,9 @@ def test_new_core_is_sci(name):
 )
 def test_shipped_config_parses(yaml_name, expected_ips, monkeypatch):
     monkeypatch.chdir(REPO_ROOT)
-    cfg = mosaic_config.load_mosaic_yaml(PurePath(str(REPO_ROOT / "configs" / yaml_name)))
+    cfg = mosaic_config.load_mosaic_yaml(
+        PurePath(str(REPO_ROOT / "configs" / yaml_name))
+    )
     ips = {g.ip for g in cfg.cpu_groups}
     assert ips == expected_ips
     # 3-hart wake-demo shape: 1 titan + 2 dormant workers with distinct boots.
@@ -61,6 +63,11 @@ def test_combined_config_hart_order(monkeypatch):
     # The combined demo relies on hart 0=titan(cva6), 1=atlas, 2=nano.
     monkeypatch.chdir(REPO_ROOT)
     cfg = mosaic_config.load_mosaic_yaml(
-        PurePath(str(REPO_ROOT / "configs" / "mosaic_new_cores.yaml")))
+        PurePath(str(REPO_ROOT / "configs" / "mosaic_new_cores.yaml"))
+    )
     order = [(g.ip, g.role, g.hart_id_base) for g in cfg.cpu_groups]
-    assert order == [("cva6", "titan", 0), ("snitch", "atlas", 1), ("picorv32", "nano", 2)]
+    assert order == [
+        ("cva6", "titan", 0),
+        ("snitch", "atlas", 1),
+        ("picorv32", "nano", 2),
+    ]

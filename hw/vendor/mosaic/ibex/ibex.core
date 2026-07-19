@@ -2,77 +2,46 @@ CAPI=2:
 
 # Ibex RV32 core (lowRISC) — MOSAIC-SoC vendored copy.
 #
-# SELF-CONTAINED: this core bundles the exact lowRISC prim/prim_generic/dv
-# dependency closure that ibex_top needs (see vendor/), so it elaborates
-# standalone (verified Verilator lint-clean with hw/sci/ibex_sci.sv). The
-# closure was extracted from refs/IP_Cores_Catalog/ibex.
+# The Ibex RTL was taken from a newer lowRISC tree than x-heep's OpenTitan
+# snapshot.  Do not compile Ibex's duplicate prim/prim_generic closure beside
+# x-heep: packages and modules such as prim_pkg, prim_buf, prim_flop and
+# prim_ram_1p would be defined twice in a heterogeneous full-SoC build.
 #
-# NOTE on multi-core SoC builds: the bundled prim cells (prim_buf,
-# prim_clock_gating, prim_flop, prim_lfsr, prim_count, prim_ram_1p*, ...)
-# OVERLAP the OpenTitan prim cells that cv32e20 pulls via the lowrisc:prim:*
-# VLNVs already in this repo. Compiling both in one design unit will produce
-# duplicate-module errors. To co-build Ibex with cv32e20 in a full SoC, switch
-# this core to `depend` on the repo's shared lowrisc:prim:* VLNVs and keep
-# vendored ONLY the cells x-heep lacks (prim_mubi_pkg, prim_count_pkg,
-# prim_count) — a prim-version reconciliation step. The all-cores GENERATION
-# test (template render) does not compile RTL, so it is unaffected.
+# Instead this descriptor reuses the shared lowrisc:prim:* VLNVs already used
+# by cv32e20/x-heep.  Only primitives absent from that snapshot remain local:
+# the inverse SECDED codecs and prim_count.  The generated MOSAIC Ibex profile
+# keeps cache and SecureIbex disabled; compatibility shims let those parameter
+# branches elaborate against the older RAM API, but they remain outside the
+# config schema and are not functionally qualified by the SoC flow.
 
 name: mosaic:ip:ibex
-description: "Ibex RV32 core (lowRISC) — MOSAIC-SoC self-contained vendored copy"
+description: "Ibex RV32 core (lowRISC) using x-heep's shared OpenTitan primitives"
 license: Apache-2.0
 
 filesets:
-  # Macro / assertion includes — added to +incdir, not compiled as sources.
-  rtl_includes:
-    files:
-      - vendor/prim/rtl/prim_assert.sv: {is_include_file: true}
-      - vendor/prim/rtl/prim_flop_macros.sv: {is_include_file: true}
-      - vendor/prim/rtl/prim_assert_standard_macros.svh: {is_include_file: true}
-      - vendor/prim/rtl/prim_assert_dummy_macros.svh: {is_include_file: true}
-      - vendor/prim/rtl/prim_assert_sec_cm.svh: {is_include_file: true}
-      - vendor/prim/rtl/prim_assert_yosys_macros.svh: {is_include_file: true}
-      - vendor/prim/rtl/prim_fifo_assert.svh: {is_include_file: true}
-      - vendor/prim/rtl/prim_macros.svh: {is_include_file: true}
-      - vendor/prim/rtl/prim_secded_inc.svh: {is_include_file: true}
-      - vendor/prim/rtl/prim_util_get_scramble_params.svh: {is_include_file: true}
-      - vendor/prim/rtl/prim_util_memload.svh: {is_include_file: true}
-      - vendor/dv_utils/dv_fcov_macros.svh: {is_include_file: true}
-      - vendor/dv_utils/dv_macros.svh: {is_include_file: true}
-    file_type: systemVerilogSource
-
   rtl:
+    depend:
+      # Reuse x-heep/OpenTitan's single primitive namespace.  These VLNVs
+      # supply their own generated generic implementations and include roots.
+      - lowrisc:dv:dv_fcov_macros
+      - lowrisc:prim:assert
+      - lowrisc:prim:buf
+      - lowrisc:prim:clock_gating
+      - lowrisc:prim:clock_mux2
+      - lowrisc:prim:flop
+      - lowrisc:prim:lfsr
+      - lowrisc:prim:ram_1p
+      - lowrisc:prim:ram_1p_scr
     files:
       # --- packages first (declaration order matters) ---
-      - vendor/prim_generic/rtl/prim_pkg.sv
-      - vendor/prim/rtl/prim_util_pkg.sv
-      - vendor/prim/rtl/prim_secded_pkg.sv
-      - vendor/prim/rtl/prim_cipher_pkg.sv
-      - vendor/prim/rtl/prim_mubi_pkg.sv
       - vendor/prim/rtl/prim_count_pkg.sv
-      - vendor/prim_generic/rtl/prim_ram_1p_pkg.sv
       - rtl/ibex_pkg.sv
-      # --- prim cells ---
-      - vendor/prim_generic/rtl/prim_buf.sv
-      - vendor/prim_generic/rtl/prim_clock_gating.sv
-      - vendor/prim_generic/rtl/prim_clock_mux2.sv
-      - vendor/prim_generic/rtl/prim_flop.sv
-      - vendor/prim_generic/rtl/prim_ram_1p.sv
+      # --- primitives absent from x-heep's OpenTitan snapshot ---
       - vendor/prim/rtl/prim_count.sv
-      - vendor/prim/rtl/prim_lfsr.sv
-      - vendor/prim/rtl/prim_prince.sv
-      - vendor/prim/rtl/prim_subst_perm.sv
-      - vendor/prim/rtl/prim_ram_1p_adv.sv
-      - vendor/prim/rtl/prim_ram_1p_scr.sv
-      - vendor/prim/rtl/prim_secded_inv_22_16_dec.sv
-      - vendor/prim/rtl/prim_secded_inv_22_16_enc.sv
       - vendor/prim/rtl/prim_secded_inv_28_22_dec.sv
       - vendor/prim/rtl/prim_secded_inv_28_22_enc.sv
       - vendor/prim/rtl/prim_secded_inv_39_32_dec.sv
       - vendor/prim/rtl/prim_secded_inv_39_32_enc.sv
-      - vendor/prim/rtl/prim_secded_inv_hamming_22_16_dec.sv
-      - vendor/prim/rtl/prim_secded_inv_hamming_22_16_enc.sv
-      - vendor/prim/rtl/prim_secded_inv_hamming_39_32_dec.sv
-      - vendor/prim/rtl/prim_secded_inv_hamming_39_32_enc.sv
       # --- ibex core ---
       - rtl/ibex_alu.sv
       - rtl/ibex_branch_predict.sv
@@ -105,6 +74,5 @@ filesets:
 targets:
   default:
     filesets:
-      - rtl_includes
       - rtl
     toplevel: ibex_top

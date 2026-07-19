@@ -81,10 +81,14 @@ module mosaic_tb;
   always_ff @(posedge clk) begin
     if (exit_valid) begin
       $display("[mosaic_tb] exit_valid asserted, exit_value=%0d", exit_value);
-      if (exit_value == 0) $display("EXIT SUCCESS");
-      else $display("EXIT FAILURE: %0d", exit_value);
-      dump();
-      $finish;
+      if (exit_value == 0) begin
+        $display("EXIT SUCCESS");
+        dump();
+        $finish;
+      end else begin
+        dump();
+        $fatal(1, "EXIT FAILURE: %0d", exit_value);
+      end
     end
   end
 
@@ -97,7 +101,7 @@ module mosaic_tb;
       if (cyc == 60000) begin
         $display("[mosaic_tb] watchdog @%0t (no exit yet) — dumping state:", $time);
         dump();
-        $finish;
+        $fatal(1, "full-SoC watchdog expired without exit");
       end
     end
   end

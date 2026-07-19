@@ -68,15 +68,18 @@ extern "C" {
 /** CPI estimate array base offset (RW). One 32-bit word per hart. */
 #define TDU_CPI_EST_BASE_OFFSET      0x20u
 
+/** Worker completion/park request (write-one pulse per hart). */
+#define TDU_PARK_REQ_REG_OFFSET      0x60u
+
 // ── TDU scheduling modes ───────────────────────────────────────────
 
 /** Static scheduling: TITAN assigns tasks to fixed cores. */
 #define TDU_SCHED_STATIC      0u
 
-/** Dynamic scheduling: TITAN migrates tasks based on CPI estimates. */
+/** Dynamic software policy: TITAN may place tasks from CPI telemetry. */
 #define TDU_SCHED_DYNAMIC     1u
 
-/** Power-aware scheduling: TITAN biases placement by energy budget. */
+/** Power-aware software policy: TITAN may use the energy proxy. */
 #define TDU_SCHED_POWER_AWARE 2u
 
 // ── TDU task descriptor format (32-bit packed) ─────────────────────

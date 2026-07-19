@@ -15,6 +15,14 @@
   dma_obi_msb = dma.get_num_master_ports() - 1
   is_mc = xheep.is_multi_core()
   nh = xheep.num_harts()
+  tdu_enabled = is_mc and bool(xheep.get_extension("tdu_enabled"))
+  debug_hart_mask = xheep.get_extension("debug_hart_mask")
+  if debug_hart_mask is None:
+      debug_hart_mask = (1 << max(1, nh)) - 1
+  interrupt_hart_mask = xheep.get_extension("interrupt_hart_mask") or 0
+  hart_roles = []
+  for group in xheep.cpus():
+      hart_roles.extend([group.role] * group.count)
 
   clk_module = next((p for p in xheep.get_padring().get_connected_pins() if p.name in ["clk", "ref_clk"] ), None).module
   rst_module = next((p for p in xheep.get_padring().get_connected_pins() if p.name == "rst"), None).module
@@ -89,8 +97,10 @@ module core_v_mini_mcu
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_read_resp_i,
     output obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_write_req_o,
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_write_resp_i,
+% if not is_mc:
     output obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_addr_req_o,
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_addr_resp_i,
+% endif
 
     output fifo_req_t [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] hw_fifo_req_o,
     input fifo_resp_t [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] hw_fifo_resp_i,
@@ -162,9 +172,12 @@ module core_v_mini_mcu
   // Per-core hart IDs (core 0 gets hart_id_i, others get sequential IDs)
   logic [31:0] hart_id_array [NRHARTS-1:0];
   always_comb begin
-    hart_id_array[0] = hart_id_i;
-    for (int i = 1; i < NRHARTS; i++) begin
-      hart_id_array[i] = hart_id_i + i;
+    // MOSAIC platform-service indices and generated software use local,
+    // contiguous hart IDs. xheep_instance_id_i remains the separate SoC
+    // instance namespace; an external hart_id_i base must not skew CLINT,
+    // PLIC, TDU, debug masks, or mhartid-visible software indices.
+    for (int i = 0; i < NRHARTS; i++) begin
+      hart_id_array[i] = 32'(i);
     end
   end
 % else:
@@ -179,8 +192,10 @@ module core_v_mini_mcu
   obi_resp_t [${dma_obi_msb}:0]dma_read_resp;
   obi_req_t [${dma_obi_msb}:0]dma_write_req;
   obi_resp_t [${dma_obi_msb}:0]dma_write_resp;
+% if not is_mc:
   obi_req_t [${dma_obi_msb}:0]dma_addr_req;
   obi_resp_t [${dma_obi_msb}:0]dma_addr_resp;
+% endif
 
   // ram signals
   obi_req_t [core_v_mini_mcu_pkg::NUM_BANKS-1:0] ram_slave_req;
@@ -208,11 +223,22 @@ module core_v_mini_mcu
   logic [NRHARTS-1:0] core_sleep;
   logic [NRHARTS-1:0] core_running;
   logic [NRHARTS-1:0] core_wake;
+  logic [NRHARTS-1:0] core_park;
+  logic [NRHARTS-1:0] clint_timer_irq;
+  logic [NRHARTS-1:0] clint_software_irq;
+  logic [63:0]         clint_mtime;
   logic                tdu_irq;
   // A core is "running" when it is not sleeping (WFI/halted).
   // The TDU uses this to track active cores for energy accounting
   // and dynamic scheduling decisions.
   assign core_running = ~core_sleep;
+% if not tdu_enabled:
+  // All-TITAN SMP configurations may intentionally omit the TDU.  There are
+  // no dormant workers in that profile, so keep the dispatch controls idle.
+  assign core_wake = '0;
+  assign core_park = '0;
+  assign tdu_irq   = 1'b0;
+% endif
 
   // cpu_subsystem's 1-bit-per-hart control ports (debug_req_i/core_wake_i/
   // core_sleep_o) are PACKED [NUM_HARTS-1:0], matching these packed SoC nets, so
@@ -226,8 +252,13 @@ module core_v_mini_mcu
   // irq signals
   logic irq_ack;
   logic [4:0] irq_id_out;
+% if is_mc:
+  logic [NRHARTS-1:0] irq_software;
+  logic [NRHARTS-1:0] irq_external;
+% else:
   logic irq_software;
   logic irq_external;
+% endif
   logic [15:0] irq_fast;
 
   // Memory Map SPI Region
@@ -241,19 +272,40 @@ module core_v_mini_mcu
   logic [31:0] intr;
   logic [15:0] fast_intr;
 % if is_mc:
-  // Per-hart interrupt vectors.
-  // Hart 0 (TITAN) receives the full interrupt vector (PLIC external +
-  // timer + software + fast interrupts). It runs FreeRTOS and handles
-  // all external events, dispatching work to ATLAS/NANO cores via the TDU.
-  // Harts 1..N (ATLAS/NANO) receive only the timer interrupt — the TDU
-  // wake pulses serve as the inter-core notification mechanism.
+  // Per-hart interrupt vectors are derived from the configured roles, never
+  // from an implicit "hart zero" convention. TITANs receive the platform
+  // vector. Workers receive a timer plus a TDU software-interrupt pulse; SCI
+  // capability validation rejects cores that cannot support the requested
+  // interrupt policy.
   logic [31:0] intr_array [NRHARTS-1:0];
   always_comb begin
-    intr_array[0] = intr;  // TITAN: full vector
-    for (int i = 1; i < NRHARTS; i++) begin
-      // Worker cores: timer only (bit [7]), no PLIC external / fast / software
-      intr_array[i] = {16'b0, 4'b0, 1'b0, 3'b0, rv_timer_intr[0], 3'b0, 1'b0, 3'b0};
-    end
+% for hart, role in enumerate(hart_roles):
+% if role == "titan":
+    intr_array[${hart}] = intr;
+    intr_array[${hart}][11] = irq_external[${hart}];
+    intr_array[${hart}][7] = clint_timer_irq[${hart}];
+    intr_array[${hart}][3] = clint_software_irq[${hart}]
+                               | irq_software[${hart}]
+                               ;
+% if tdu_enabled:
+    intr_array[${hart}][31] = intr[31] | tdu_irq;
+% endif
+% else:
+    intr_array[${hart}] = '0;
+    intr_array[${hart}][7] = clint_timer_irq[${hart}];
+    intr_array[${hart}][3] = clint_software_irq[${hart}]
+% if (interrupt_hart_mask >> hart) & 1:
+                               | irq_software[${hart}]
+% endif
+% if tdu_enabled:
+                               | core_wake[${hart}]
+% endif
+                               ;
+% if (interrupt_hart_mask >> hart) & 1:
+    intr_array[${hart}][11] = irq_external[${hart}];
+% endif
+% endif
+% endfor
   end
 % endif
 
@@ -338,7 +390,11 @@ module core_v_mini_mcu
   logic i2s_rx_valid;
 
   assign intr = {
+% if is_mc:
+    irq_fast, 4'b0, irq_external[0], 3'b0, rv_timer_intr[0], 3'b0, irq_software[0], 3'b0
+% else:
     irq_fast, 4'b0, irq_external, 3'b0, rv_timer_intr[0], 3'b0, irq_software, 3'b0
+% endif
   };
 
   assign fast_intr = {
@@ -372,8 +428,10 @@ module core_v_mini_mcu
       .core_data_req_o(core_data_req),
       .core_data_resp_i(core_data_resp),
       .irq_i(intr_array),  // per-hart interrupt vectors
+      .time_i(clint_mtime),
       .debug_req_i(debug_req),
       .core_wake_i(core_wake),  // TDU/orchestrator wake → releases dormant workers
+      .core_park_i(core_park),  // worker completion → re-arms dormancy for next task
       .core_sleep_o(core_sleep)
     );
 % else:
@@ -399,7 +457,8 @@ module core_v_mini_mcu
   debug_subsystem #(
       .NRHARTS    (NRHARTS),
       .JTAG_IDCODE(JTAG_IDCODE),
-      .SPI_SLAVE(${has_spi_slave})
+      .SPI_SLAVE(${has_spi_slave}),
+      .HART_DEBUG_CAPABLE(NRHARTS'(${debug_hart_mask}))
   ) debug_subsystem_i (
       .clk_i,
       .rst_ni,
@@ -444,8 +503,10 @@ module core_v_mini_mcu
       .dma_read_resp_o(dma_read_resp),
       .dma_write_req_i(dma_write_req),
       .dma_write_resp_o(dma_write_resp),
+% if not is_mc:
       .dma_addr_req_i(dma_addr_req),
       .dma_addr_resp_o(dma_addr_resp),
+% endif
       .ext_xbar_master_req_i(ext_xbar_master_req_i),
       .ext_xbar_master_resp_o(ext_xbar_master_resp_o),
       .ram_req_o(ram_slave_req),
@@ -467,9 +528,12 @@ module core_v_mini_mcu
       .ext_dma_read_req_o(ext_dma_read_req_o),
       .ext_dma_read_resp_i(ext_dma_read_resp_i),
       .ext_dma_write_req_o(ext_dma_write_req_o),
-      .ext_dma_write_resp_i(ext_dma_write_resp_i),
+      .ext_dma_write_resp_i(ext_dma_write_resp_i)
+% if not is_mc:
+      ,
       .ext_dma_addr_req_o(ext_dma_addr_req_o),
       .ext_dma_addr_resp_i(ext_dma_addr_resp_i)
+% endif
   );
 
   memory_subsystem #(
@@ -512,7 +576,10 @@ module core_v_mini_mcu
       .intr_i(intr),
       .intr_vector_ext_i,
 % if is_mc:
-      .core_sleep_i(core_sleep[0]),
+      // The legacy power manager controls one aggregate CPU domain.  It may
+      // gate that domain only when every hart is asleep; using hart 0 alone
+      // could reset active workers.
+      .core_sleep_i(&core_sleep),
 % else:
       .core_sleep_i(core_sleep),
 % endif
@@ -530,8 +597,10 @@ module core_v_mini_mcu
       .dma_read_resp_i(dma_read_resp),
       .dma_write_req_o(dma_write_req),
       .dma_write_resp_i(dma_write_resp),
+% if not is_mc:
       .dma_addr_req_o(dma_addr_req),
       .dma_addr_resp_i(dma_addr_resp),
+% endif
       .dma_done_intr_o(dma_done_intr),
       .dma_window_intr_o(dma_window_intr),
       .hw_fifo_req_o,
@@ -557,10 +626,17 @@ module core_v_mini_mcu
       .dma_done_o
 % if is_mc:
       ,
+      .clint_timer_irq_o(clint_timer_irq),
+      .clint_software_irq_o(clint_software_irq),
+      .clint_mtime_o(clint_mtime)
+% endif
+% if tdu_enabled:
+      ,
       // MOSAIC TDU
       .tdu_core_running_i(core_running),
       .tdu_core_sleep_i(core_sleep),
       .tdu_core_wake_o(core_wake),
+      .tdu_core_park_o(core_park),
       .tdu_irq_o(tdu_irq)
 % endif
   );
@@ -634,6 +710,14 @@ module core_v_mini_mcu
 % if is_mc:
   // All debug_req go to multi-core cpu_subsystem (handles them per-hart internally)
   assign debug_core_req = debug_req[0];
+  // Explicit MOSAIC topology owns every debug hart. The legacy EXT_HARTS hook
+  // cannot be combined without extending the generated PLIC/CLINT/software
+  // index space, so expose an honest idle output and fail a bad simulation.
+  assign ext_debug_req_o = '0;
+`ifndef SYNTHESIS
+  initial assert (EXT_HARTS == 0)
+    else $fatal(1, "EXT_HARTS is unsupported with an explicit MOSAIC topology");
+`endif
 % else:
   if (NRHARTS == 1) begin : gen_single_hart_debug
     assign debug_core_req = debug_req;

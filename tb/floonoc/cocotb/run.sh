@@ -17,18 +17,25 @@ if [ "${1:-}" = "stage2" ]; then
   MODS+=(test_noc)
   echo "### generating the FlooNoC fabric (configs/mosaic_floonoc.yaml) ..."
   ( cd "$REPO"
-    TPLS=$(find . \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
+    TPLS=$(find . \( -path './build/*' -o -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
         -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
         -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
     python3 util/xheep_gen/mcu_gen.py --mosaic_config configs/mosaic_floonoc.yaml \
         --base_config configs/general.hjson --pads_cfg configs/pad_cfg.py \
         --outtpl "$TPLS" --externaltpl "" >/dev/null ) || { echo "fabric gen failed"; exit 1; }
+  MANIFEST=$(cd "$REPO" && python3 util/xheep_gen/build_manifest.py locate \
+      --config configs/mosaic_floonoc.yaml --base-config configs/general.hjson \
+      --pads-cfg configs/pad_cfg.py --repo-root "$REPO") || exit 1
+  GENERATED_ROOT=$(python3 -c \
+      'import json,sys; print(json.load(open(sys.argv[1]))["generated_root"])' \
+      "$MANIFEST") || exit 1
 fi
 
 rc=0
 for i in "${!TOPS[@]}"; do
   echo "### ===== bridge cocotb: TOPLEVEL=${TOPS[$i]} ====="
   rm -rf sim_build results.xml __pycache__
-  make SIM=verilator TOPLEVEL="${TOPS[$i]}" MODULE="${MODS[$i]}" || rc=1
+  make SIM=verilator TOPLEVEL="${TOPS[$i]}" MODULE="${MODS[$i]}" \
+    MOSAIC_GENERATED_ROOT="${GENERATED_ROOT:-}" || rc=1
 done
 exit $rc

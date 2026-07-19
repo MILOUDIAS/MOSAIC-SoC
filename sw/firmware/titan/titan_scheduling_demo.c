@@ -11,11 +11,11 @@
  *   Phase 2 — DYNAMIC: re-dispatch based on observed CPI estimates
  *   Phase 3 — POWER_AWARE: energy-budget-aware core selection
  *
- * Each phase dispatches the same workload (2 signal-processing +
- * 4 sensor-polling tasks), measures the energy counter, and reports
+ * Each phase dispatches one task per generated worker, measures the energy
+ * counter, and reports
  * results to the testbench via shared-memory sentinel slots.
  *
- * Sentinel slot layout (byte offsets from SENTINEL_BASE):
+ * Sentinel slot layout (byte offsets from MOSAIC_SENTINEL_BASE):
  *   0x00 — TITAN status word (see STATUS_* below)
  *   0x04 — Phase 1 energy count
  *   0x08 — Phase 2 energy count
@@ -30,16 +30,22 @@
 
 #include "tdu.h"
 
+#if defined(MOSAIC_USE_BUILD_GENERATED_HEADERS)
+#include <mosaic_memory_map.h>
+#include <mosaic_topology.h>
+#else
+#include "mosaic_legacy_config.h"
+#endif
+
+#if !MOSAIC_TDU_ENABLED
+#error "the scheduling demo requires scheduler.tdu=true"
+#endif
+
+#if MOSAIC_NUM_ATLAS_HARTS < 1 || MOSAIC_NUM_NANO_HARTS < 2
+#error "the scheduling demo requires at least one ATLAS and two NANO harts"
+#endif
+
 // ── Constants ───────────────────────────────────────────────────────
-
-/** Number of ATLAS (FazyRV) worker cores in PoC. */
-#define NUM_ATLAS 2
-
-/** Number of NANO (SERV) worker cores in PoC. */
-#define NUM_NANO  4
-
-/** Total worker cores. */
-#define NUM_WORKERS (NUM_ATLAS + NUM_NANO)
 
 /** Sentinel value for TITAN. */
 #define SENTINEL_TITAN_VAL  0xC0FFEE00u
@@ -74,8 +80,8 @@ static mmio_region_t sentinel_region;
 /** MMIO handle for scratchpad (inter-phase CPI/energy data). */
 static mmio_region_t scratchpad_region;
 
-/** Scratchpad base: 0x4000 in SRAM — used for CPI arrays and temp data. */
-#define SCRATCHPAD_BASE_ADDR  0x4000u
+/** Generated shared result window used for CPI arrays and temporary data. */
+#define SCRATCHPAD_BASE_ADDR MOSAIC_RESULT_BASE
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -83,9 +89,12 @@ static mmio_region_t scratchpad_region;
  * Population count for RV32I (no __builtin_popcount without libgcc).
  */
 static inline uint32_t popcount32(uint32_t x) {
-    x = x - ((x >> 1) & 0x55555555u);
-    x = (x & 0x33333333u) + ((x >> 2) & 0x33333333u);
-    return (((x + (x >> 4)) & 0x0F0F0F0Fu) * 0x01010101u) >> 24;
+    uint32_t count = 0u;
+    while (x != 0u) {
+        x &= x - 1u;
+        count++;
+    }
+    return count;
 }
 
 /** Write a 32-bit word to sentinel memory. */
@@ -129,19 +138,33 @@ static void dispatch_task(uint16_t task_id, uint8_t hart, uint8_t prio) {
  * Reset all worker sentinel slots to zero.
  */
 static void clear_worker_sentinels(void) {
-    for (uint32_t i = 0; i < NUM_WORKERS; i++) {
-        sen_w(0x04u + i * 4u, 0u);
+    for (uint32_t hart = 0; hart < MOSAIC_NUM_HARTS; hart++) {
+        if ((MOSAIC_WORKER_HART_MASK & (1u << hart)) != 0u) {
+            sen_w(hart * 4u, 0u);
+        }
     }
 }
 
 /**
- * Count how many worker sentinel slots match expected value.
+ * Count completed harts in an active mask using their generated roles.
  */
-static uint32_t count_worker_done(uint32_t expected) {
+static uint32_t count_worker_done(uint32_t active_mask) {
     uint32_t mask = 0u;
-    for (uint32_t i = 0; i < NUM_WORKERS; i++) {
-        if (sen_r(0x04u + i * 4u) == expected) {
-            mask |= (1u << i);
+    for (uint32_t hart = 0; hart < MOSAIC_NUM_HARTS; hart++) {
+        const uint32_t bit = 1u << hart;
+        uint32_t expected;
+        if ((active_mask & bit) == 0u) {
+            continue;
+        }
+        if ((MOSAIC_ATLAS_HART_MASK & bit) != 0u) {
+            expected = SENTINEL_ATLAS_VAL;
+        } else if ((MOSAIC_NANO_HART_MASK & bit) != 0u) {
+            expected = SENTINEL_NANO_VAL;
+        } else {
+            continue;
+        }
+        if (sen_r(hart * 4u) == expected) {
+            mask |= bit;
         }
     }
     return popcount32(mask);
@@ -153,8 +176,8 @@ static uint32_t count_worker_done(uint32_t expected) {
  * Phase 1: STATIC scheduling.
  *
  * Baseline: dispatch tasks with fixed core assignment.
- * Signal-processing tasks → ATLAS (harts 1-2)
- * Sensor-polling tasks → NANO (harts 3-6)
+ * Signal-processing tasks → generated ATLAS hart range
+ * Sensor-polling tasks → generated NANO hart range
  * TITAN monitors completion via sentinels.
  *
  * @return Energy counter value at end of phase.
@@ -165,18 +188,23 @@ static uint32_t phase_static(void) {
     clear_worker_sentinels();
 
     /* Dispatch signal-processing to ATLAS. */
-    for (uint32_t i = 0; i < NUM_ATLAS; i++) {
+    for (uint32_t i = 0; i < MOSAIC_NUM_ATLAS_HARTS; i++) {
         dispatch_task(TASK_ID_SIGNAL_PROC, (uint8_t)(1u + i), 0u);
     }
 
     /* Dispatch sensor-polling to NANO. */
-    for (uint32_t i = 0; i < NUM_NANO; i++) {
-        dispatch_task(TASK_ID_SENSOR_POLL, (uint8_t)(NUM_ATLAS + 1u + i), 1u);
+    for (uint32_t i = 0; i < MOSAIC_NUM_NANO_HARTS; i++) {
+        dispatch_task(
+            TASK_ID_SENSOR_POLL,
+            (uint8_t)(MOSAIC_FIRST_NANO_HART + i),
+            1u
+        );
     }
 
     /* Poll until all workers complete or timeout. */
     uint32_t timeout = POLL_TIMEOUT;
-    while (count_worker_done(SENTINEL_ATLAS_VAL | SENTINEL_NANO_VAL) < NUM_WORKERS
+    while (count_worker_done(MOSAIC_WORKER_HART_MASK) <
+               MOSAIC_NUM_WORKER_HARTS
            && timeout > 0) {
         timeout--;
     }
@@ -206,32 +234,32 @@ static uint32_t phase_dynamic(void) {
 
     /* Step 1: Read current CPI estimates from scratchpad (updated by
      * previous phase's firmware or defaults). */
-    uint32_t cpi_atlas[NUM_ATLAS];
-    uint32_t cpi_nano[NUM_NANO];
+    uint32_t cpi_atlas[MOSAIC_NUM_ATLAS_HARTS];
+    uint32_t cpi_nano[MOSAIC_NUM_NANO_HARTS];
 
-    for (uint32_t i = 0; i < NUM_ATLAS; i++) {
-        cpi_atlas[i] = tdu_get_cpi_estimate(1u + i);
+    for (uint32_t i = 0; i < MOSAIC_NUM_ATLAS_HARTS; i++) {
+        cpi_atlas[i] = tdu_get_cpi_estimate(MOSAIC_FIRST_ATLAS_HART + i);
     }
-    for (uint32_t i = 0; i < NUM_NANO; i++) {
-        cpi_nano[i] = tdu_get_cpi_estimate(NUM_ATLAS + 1u + i);
+    for (uint32_t i = 0; i < MOSAIC_NUM_NANO_HARTS; i++) {
+        cpi_nano[i] = tdu_get_cpi_estimate(MOSAIC_FIRST_NANO_HART + i);
     }
 
     /* Step 2: CPI-based migration.
      * If any ATLAS core's CPI exceeds 2x the best ATLAS CPI,
      * migrate its task to the best core. */
     uint32_t best_atlas_cpi = cpi_atlas[0];
-    uint8_t  best_atlas_hart = 1u;
-    for (uint32_t i = 1; i < NUM_ATLAS; i++) {
+    uint8_t best_atlas_hart = (uint8_t)MOSAIC_FIRST_ATLAS_HART;
+    for (uint32_t i = 1; i < MOSAIC_NUM_ATLAS_HARTS; i++) {
         if (cpi_atlas[i] < best_atlas_cpi) {
             best_atlas_cpi = cpi_atlas[i];
-            best_atlas_hart = (uint8_t)(1u + i);
+            best_atlas_hart = (uint8_t)(MOSAIC_FIRST_ATLAS_HART + i);
         }
     }
 
     /* Dispatch signal-processing to the best ATLAS core only.
      * (In a real FreeRTOS system, the other ATLAS core would be idle
      * or running lower-priority tasks.) */
-    for (uint32_t i = 0; i < NUM_ATLAS; i++) {
+    for (uint32_t i = 0; i < MOSAIC_NUM_ATLAS_HARTS; i++) {
         dispatch_task(TASK_ID_SIGNAL_PROC, best_atlas_hart, 0u);
     }
 
@@ -239,30 +267,32 @@ static uint32_t phase_dynamic(void) {
      * If average NANO CPI > 24 (slow), use only the 2 fastest NANO
      * cores and sleep the rest. */
     uint32_t nano_cpi_sum = 0;
-    for (uint32_t i = 0; i < NUM_NANO; i++) {
+    for (uint32_t i = 0; i < MOSAIC_NUM_NANO_HARTS; i++) {
         nano_cpi_sum += cpi_nano[i];
     }
-    uint32_t nano_avg_cpi = nano_cpi_sum / NUM_NANO;
+    uint32_t nano_avg_cpi = nano_cpi_sum / MOSAIC_NUM_NANO_HARTS;
 
     /* Find the 2 fastest NANO cores. */
     uint8_t fast_nano[2];
-    /* Simple selection: hart 3 and 4 by default, swap if faster ones exist. */
-    fast_nano[0] = (uint8_t)(NUM_ATLAS + 1u);
-    fast_nano[1] = (uint8_t)(NUM_ATLAS + 2u);
+    /* Start with the first two generated NANO harts, then refine by CPI. */
+    fast_nano[0] = (uint8_t)MOSAIC_FIRST_NANO_HART;
+    fast_nano[1] = (uint8_t)(MOSAIC_FIRST_NANO_HART + 1u);
 
-    for (uint32_t i = 0; i < NUM_NANO; i++) {
-        uint8_t hart = (uint8_t)(NUM_ATLAS + 1u + i);
-        if (cpi_nano[i] < cpi_nano[fast_nano[0] - NUM_ATLAS - 1u]) {
+    for (uint32_t i = 0; i < MOSAIC_NUM_NANO_HARTS; i++) {
+        uint8_t hart = (uint8_t)(MOSAIC_FIRST_NANO_HART + i);
+        if (cpi_nano[i] < cpi_nano[fast_nano[0] - MOSAIC_FIRST_NANO_HART]) {
             fast_nano[1] = fast_nano[0];
             fast_nano[0] = hart;
-        } else if (cpi_nano[i] < cpi_nano[fast_nano[1] - NUM_ATLAS - 1u]) {
+        } else if (
+            cpi_nano[i] < cpi_nano[fast_nano[1] - MOSAIC_FIRST_NANO_HART]
+        ) {
             fast_nano[1] = hart;
         }
     }
 
     /* Dispatch sensor-polling to the 2 fastest NANO cores only.
      * Each handles 2 tasks (round-robin). */
-    for (uint32_t i = 0; i < NUM_NANO; i++) {
+    for (uint32_t i = 0; i < MOSAIC_NUM_NANO_HARTS; i++) {
         uint8_t target = fast_nano[i % 2];
         dispatch_task(TASK_ID_SENSOR_POLL, target, 1u);
     }
@@ -275,7 +305,7 @@ static uint32_t phase_dynamic(void) {
 
     /* Wait for completion. */
     uint32_t timeout = POLL_TIMEOUT;
-    while (count_worker_done(SENTINEL_ATLAS_VAL | SENTINEL_NANO_VAL) < NUM_WORKERS
+    while (count_worker_done(active_mask) < popcount32(active_mask)
            && timeout > 0) {
         timeout--;
     }
@@ -312,17 +342,21 @@ static uint32_t phase_power_aware(void) {
 
     /* Energy budget: target is 50% of the worst-case energy.
      * Worst case = all 7 cores running full time.
-     * Budget = (NUM_WORKERS * max_cycles) / 2.
+     * Budget = (MOSAIC_NUM_WORKER_HARTS * max_cycles) / 2.
      * We use a simplified threshold based on the energy counter
      * reading after a calibration delay. */
     uint32_t energy_budget = 50000u;  /* Tunable threshold. */
 
     /* Step 1: Calibrate — run all cores briefly, measure energy. */
-    for (uint32_t i = 0; i < NUM_ATLAS; i++) {
+    for (uint32_t i = 0; i < MOSAIC_NUM_ATLAS_HARTS; i++) {
         dispatch_task(TASK_ID_SIGNAL_PROC, (uint8_t)(1u + i), 0u);
     }
-    for (uint32_t i = 0; i < NUM_NANO; i++) {
-        dispatch_task(TASK_ID_SENSOR_POLL, (uint8_t)(NUM_ATLAS + 1u + i), 1u);
+    for (uint32_t i = 0; i < MOSAIC_NUM_NANO_HARTS; i++) {
+        dispatch_task(
+            TASK_ID_SENSOR_POLL,
+            (uint8_t)(MOSAIC_FIRST_NANO_HART + i),
+            1u
+        );
     }
 
     /* Let all cores run for a calibration period. */
@@ -331,20 +365,20 @@ static uint32_t phase_power_aware(void) {
     uint32_t energy_sample = tdu_get_energy_counter();
 
     /* Step 2: Decide how many cores to use based on energy. */
-    uint8_t  active_harts[7];
+    uint8_t active_harts[MOSAIC_NUM_HARTS];
     uint32_t num_active;
 
     if (energy_sample <= energy_budget) {
         /* Energy is within budget — use all cores. */
-        num_active = NUM_WORKERS;
-        for (uint32_t i = 0; i < NUM_WORKERS; i++) {
+        num_active = MOSAIC_NUM_WORKER_HARTS;
+        for (uint32_t i = 0; i < MOSAIC_NUM_WORKER_HARTS; i++) {
             active_harts[i] = (uint8_t)(1u + i);
         }
     } else {
         /* Energy exceeds budget — use only ATLAS cores (faster, fewer). */
-        num_active = NUM_ATLAS;
-        for (uint32_t i = 0; i < NUM_ATLAS; i++) {
-            active_harts[i] = (uint8_t)(1u + i);
+        num_active = MOSAIC_NUM_ATLAS_HARTS;
+        for (uint32_t i = 0; i < MOSAIC_NUM_ATLAS_HARTS; i++) {
+            active_harts[i] = (uint8_t)(MOSAIC_FIRST_ATLAS_HART + i);
         }
         /* Sleep NANO cores by not including them in wake mask. */
     }
@@ -362,7 +396,7 @@ static uint32_t phase_power_aware(void) {
 
     /* Dispatch tasks only to active cores. */
     for (uint32_t i = 0; i < num_active; i++) {
-        uint16_t tid = (active_harts[i] <= NUM_ATLAS)
+        uint16_t tid = ((MOSAIC_ATLAS_HART_MASK & (1u << active_harts[i])) != 0u)
                        ? TASK_ID_SIGNAL_PROC
                        : TASK_ID_SENSOR_POLL;
         dispatch_task(tid, active_harts[i], 0u);
@@ -370,7 +404,7 @@ static uint32_t phase_power_aware(void) {
 
     /* Wait for completion. */
     uint32_t timeout = POLL_TIMEOUT;
-    while (count_worker_done(SENTINEL_ATLAS_VAL | SENTINEL_NANO_VAL) < num_active
+    while (count_worker_done(new_mask) < num_active
            && timeout > 0) {
         timeout--;
     }
@@ -393,22 +427,21 @@ static uint32_t phase_power_aware(void) {
  */
 int main(void) {
     /* Initialize memory regions. */
-    sentinel_region = mmio_region_from_addr(SENTINEL_BASE);
+    sentinel_region = mmio_region_from_addr(MOSAIC_SENTINEL_BASE);
     scratchpad_region = mmio_region_from_addr(SCRATCHPAD_BASE_ADDR);
 
     /* Write TITAN sentinel. */
     sen_w(0x00u, SENTINEL_TITAN_VAL);
 
     /* Default TDU configuration. */
-    uint32_t worker_mask = ((1u << NUM_WORKERS) - 1u) << 1u;
-    tdu_set_wake_mask(worker_mask);
+    tdu_set_wake_mask(MOSAIC_WORKER_HART_MASK);
 
     /* Set initial CPI estimates (default values for each core type). */
-    for (uint32_t i = 0; i < NUM_ATLAS; i++) {
-        tdu_set_cpi_estimate(1u + i, 4u);   /* ATLAS: CPI ~4 */
+    for (uint32_t i = 0; i < MOSAIC_NUM_ATLAS_HARTS; i++) {
+        tdu_set_cpi_estimate(MOSAIC_FIRST_ATLAS_HART + i, 4u);
     }
-    for (uint32_t i = 0; i < NUM_NANO; i++) {
-        tdu_set_cpi_estimate(NUM_ATLAS + 1u + i, 32u);  /* NANO: CPI ~32 */
+    for (uint32_t i = 0; i < MOSAIC_NUM_NANO_HARTS; i++) {
+        tdu_set_cpi_estimate(MOSAIC_FIRST_NANO_HART + i, 32u);
     }
 
     /* ── Phase 1: STATIC ── */
@@ -420,12 +453,12 @@ int main(void) {
     /* Update CPI estimates to simulate observed variation.
      * In real operation, firmware would read hardware performance
      * counters to compute actual CPI. */
-    tdu_set_cpi_estimate(1, 3u);   /* ATLAS hart 1: slightly faster */
-    tdu_set_cpi_estimate(2, 6u);   /* ATLAS hart 2: slightly slower */
-    tdu_set_cpi_estimate(3, 28u);  /* NANO hart 3: fast */
-    tdu_set_cpi_estimate(4, 35u);  /* NANO hart 4: slow */
-    tdu_set_cpi_estimate(5, 30u);  /* NANO hart 5: medium */
-    tdu_set_cpi_estimate(6, 40u);  /* NANO hart 6: very slow */
+    for (uint32_t i = 0; i < MOSAIC_NUM_ATLAS_HARTS; i++) {
+        tdu_set_cpi_estimate(MOSAIC_FIRST_ATLAS_HART + i, 3u + 3u * i);
+    }
+    for (uint32_t i = 0; i < MOSAIC_NUM_NANO_HARTS; i++) {
+        tdu_set_cpi_estimate(MOSAIC_FIRST_NANO_HART + i, 28u + 3u * i);
+    }
 
     uint32_t energy2 = phase_dynamic();
     sen_w(0x08u, energy2);

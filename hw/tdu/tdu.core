@@ -14,6 +14,7 @@ filesets:
     files:
     - rtl/tdu_pkg.sv
     - rtl/tdu.sv
+    - rtl/mosaic_clint.sv
     file_type: systemVerilogSource
 
 targets:

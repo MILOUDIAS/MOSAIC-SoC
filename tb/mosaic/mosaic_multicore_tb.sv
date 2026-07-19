@@ -152,21 +152,21 @@ module mosaic_multicore_tb
     $display("\n--- summary ---");
     $display("integration : %0d/%0d cores alive (issued bus requests)", n_alive, NH);
     $display("execution   : %0d/%0d cores retired the test program", n_exec, NH);
-    if (errors == 0 && n_exec == NH)
+    if (errors == 0 && n_exec == NH) begin
       $display("=== MOSAIC multi-core TB: PASS — all cores alive + executed ===\n");
-    else if (errors == 0)
-      $display(
-          "=== MOSAIC multi-core TB: integration OK (all alive); %0d core(s) pending execution review ===\n",
-          NH - n_exec
-      );
-    else $display("=== MOSAIC multi-core TB: FAIL — %0d dead core(s) ===\n", errors);
-    $finish;
+      $finish;
+    end else if (errors == 0) begin
+      $fatal(1,
+             "MOSAIC multi-core TB: %0d core(s) alive but did not execute the program",
+             NH - n_exec);
+    end else begin
+      $fatal(1, "MOSAIC multi-core TB: %0d dead core(s)", errors);
+    end
   end
 
   // Watchdog
   initial begin
     repeat (2_000_000) @(posedge clk);
-    $display("[FATAL] watchdog timeout — a core hung");
-    $finish;
+    $fatal(1, "watchdog timeout — a core hung");
   end
 endmodule

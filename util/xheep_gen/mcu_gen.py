@@ -7,6 +7,7 @@
 # Simplified version of occamygen.py https://github.com/pulp-platform/snitch/blob/master/util/occamygen.py
 
 import argparse
+import fcntl
 import hjson
 import pathlib
 import sys
@@ -47,10 +48,15 @@ def write_template(tpl_path, outfile, **kwargs):
             else:
                 filename = tpl_path.with_suffix("")
 
-            with open(filename, "w") as file:
-                code = tpl.render_unicode(**kwargs, strict_undefined=True)
-                code = re_trailws.sub("", code)
-                file.write(code)
+            code = tpl.render_unicode(**kwargs, strict_undefined=True)
+            code = re_trailws.sub("", code)
+            # Import lazily so the traditional x-heep flow remains usable when
+            # this file is copied as a standalone generator script.
+            from build_manifest import atomic_write_text
+
+            filename = pathlib.Path(filename)
+            atomic_write_text(filename, code)
+            return filename.resolve()
         else:
             raise FileNotFoundError("Template file not found: {0}".format(tpl_path))
     else:
@@ -290,13 +296,82 @@ def main():
         "Intended for templates that are not in the X-HEEP repository, e.g. in the user's CHEEP repository.",
     )
 
+    parser.add_argument(
+        "--output-root",
+        type=pathlib.Path,
+        default=pathlib.Path("build/mosaic"),
+        help="Base directory for isolated MOSAIC bundles (default: build/mosaic). "
+        "Each config renders below <soc-name>-<input-hash>/generated.",
+    )
+
+    parser.add_argument(
+        "--legacy-in-place",
+        action="store_true",
+        help="Render MOSAIC templates beside their .tpl files (legacy compatibility). "
+        "The default MOSAIC flow is isolated and never overwrites those files.",
+    )
+
     args = parser.parse_args()
 
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    isolated = bool(args.mosaic_config) and not args.legacy_in_place
+    bundle = None
+    generated_root = None
+    manifest_path = None
+    generated_records = []
+    lock_file = None
+    if isolated:
+        from build_manifest import bundle_paths
+
+        base_cfg = str(args.base_config) if args.base_config else "configs/general.hjson"
+        bundle = bundle_paths(
+            args.mosaic_config,
+            base_cfg,
+            args.pads_cfg,
+            repo_root,
+            args.output_root,
+        )
+        generated_root = bundle["generated"]
+        manifest_path = bundle["manifest"]
+        generated_root.mkdir(parents=True, exist_ok=True)
+        # Same-config concurrent invocations share deterministic output paths.
+        # Serialize rendering and use atomic file replacement so they cannot
+        # expose partial RTL; different config hashes proceed independently.
+        lock_file = open(bundle["bundle"] / ".generation.lock", "w")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        print(f"MOSAIC_BUILD_KEY={bundle['key']}")
+        print(f"MOSAIC_BUILD_DIR={bundle['bundle']}")
+
+    # Pin and lock the complete config/source identity before parsing any
+    # generator input. The final manifest rehashes it and aborts on drift.
     print(f"{Colors.BLUE}[MCU-GEN]{Colors.RESET} Generating X-HEEP configuration...")
     kwargs = generate_xheep(args)
     print(
         f"{Colors.GREEN}[MCU-GEN]{Colors.RESET} X-HEEP configuration generated successfully"
     )
+
+    def output_for_template(tpl_path):
+        tpl_path = pathlib.Path(tpl_path).resolve()
+        if not isolated:
+            text_path = str(tpl_path)
+            return pathlib.Path(text_path[:-4] if text_path.endswith(".tpl") else text_path)
+        from build_manifest import logical_output_path
+
+        return generated_root / logical_output_path(tpl_path, repo_root)
+
+    def record_generated(tpl_path, output_path):
+        if not isolated:
+            return
+        from build_manifest import logical_output_path
+
+        logical = logical_output_path(pathlib.Path(tpl_path), repo_root)
+        generated_records.append(
+            {
+                "logical_path": str(logical),
+                "path": str(pathlib.Path(output_path).resolve()),
+                "template": str(pathlib.Path(tpl_path).resolve()),
+            }
+        )
 
     # Handle single template or multiple templates
     outtpl_list = [t for t in re.split(r"[,\s]+", args.outtpl or "") if t]
@@ -308,7 +383,9 @@ def main():
         print(
             f"{Colors.BLUE}[MCU-GEN]{Colors.RESET} Processing template: {Colors.BOLD}{outtpl_list[0]}{Colors.RESET}"
         )
-        write_template(pathlib.Path(outtpl_list[0]), args.outfile, **kwargs)
+        target = args.outfile if args.outfile is not None else output_for_template(outtpl_list[0])
+        written = write_template(pathlib.Path(outtpl_list[0]), target, **kwargs)
+        record_generated(outtpl_list[0], written)
         print(f"{Colors.GREEN}[MCU-GEN]{Colors.RESET} Template processed successfully")
     else:
         # Multiple templates case
@@ -322,15 +399,12 @@ def main():
         for idx, tpl in enumerate(outtpl_list, 1):
             tpl_path = pathlib.Path(tpl.strip())
             # Generate output filename from template name by removing .tpl extension
-            tpl_str = str(tpl_path)
-            if tpl_str.endswith(".tpl"):
-                generated_outfile = pathlib.Path(tpl_str[:-4])
-            else:
-                generated_outfile = tpl_path
+            generated_outfile = output_for_template(tpl_path)
             print(
                 f"{Colors.YELLOW}[MCU-GEN]{Colors.RESET} [{idx}/{len(outtpl_list)}] {tpl_path.name} {Colors.YELLOW}→{Colors.RESET} {generated_outfile.name}"
             )
-            write_template(tpl_path, generated_outfile, **kwargs)
+            written = write_template(tpl_path, generated_outfile, **kwargs)
+            record_generated(tpl_path, written)
         print(
             f"{Colors.GREEN}[MCU-GEN]{Colors.RESET} All templates processed successfully"
         )
@@ -342,15 +416,12 @@ def main():
             for idx, tpl in enumerate(externaltpl_list, 1):
                 tpl_path = pathlib.Path(tpl.strip())
                 # Generate output filename from template name by removing .tpl extension
-                tpl_str = str(tpl_path)
-                if tpl_str.endswith(".tpl"):
-                    generated_outfile = pathlib.Path(tpl_str[:-4])
-                else:
-                    generated_outfile = tpl_path
+                generated_outfile = output_for_template(tpl_path)
                 print(
                     f"{Colors.YELLOW}[MCU-GEN]{Colors.RESET} [{idx}/{len(externaltpl_list)}] {tpl_path.name} {Colors.YELLOW}→{Colors.RESET} {generated_outfile.name}"
                 )
-                write_template(tpl_path, generated_outfile, **kwargs)
+                written = write_template(tpl_path, generated_outfile, **kwargs)
+                record_generated(tpl_path, written)
             print(
                 f"{Colors.GREEN}[MCU-GEN]{Colors.RESET} All external templates processed successfully"
             )
@@ -361,14 +432,107 @@ def main():
     if args.mosaic_config:
         import floonoc_gen
 
-        repo_root = pathlib.Path(__file__).resolve().parents[2]
+        fabric_out = (
+            generated_root / floonoc_gen.FABRIC_DIR if isolated else None
+        )
         floonoc_gen.generate(
             kwargs["mosaic_cfg"],
             kwargs["num_harts"],
             kwargs["xheep"].memory_ss().ram_size_address(),
             repo_root,
+            output_dir=fabric_out,
+            work_dir=(bundle["bundle"] / "floonoc-work" if isolated else None),
         )
+        if isolated:
+            for filename in ("floo_mosaic_noc_pkg.sv", "floo_mosaic_noc.sv"):
+                output = fabric_out / filename
+                generated_records.append(
+                    {
+                        "logical_path": str(pathlib.Path(floonoc_gen.FABRIC_DIR) / filename),
+                        "path": str(output.resolve()),
+                        "generator": "floonoc_gen",
+                    }
+                )
         print(f"{Colors.GREEN}[MCU-GEN]{Colors.RESET} FlooNoC fabric step done")
+
+        # OpenTitan's vendored PLIC snapshot has NumTarget=1 baked into its
+        # generated register types.  A true multi-hart build needs one claim,
+        # enable, threshold and MSIP context per resolved hart, so generate a
+        # self-consistent PLIC closure inside the isolated configuration bundle
+        # and let FuseSoC staging overlay these logical source paths.
+        if isolated:
+            import plic_gen
+
+            plic_out = generated_root / plic_gen.LOGICAL_RTL_DIR
+            plic_outputs = plic_gen.generate(
+                kwargs["num_harts"],
+                repo_root,
+                plic_out,
+                bundle["bundle"] / "plic-work",
+            )
+            for output in plic_outputs:
+                generated_records.append(
+                    {
+                        "logical_path": str(plic_gen.LOGICAL_RTL_DIR / output.name),
+                        "path": str(output.resolve()),
+                        "generator": "plic_gen",
+                    }
+                )
+            print(
+                f"{Colors.GREEN}[MCU-GEN]{Colors.RESET} "
+                f"Generated {kwargs['num_harts']}-target PLIC"
+            )
+        elif kwargs["num_harts"] > 1:
+            parser.error(
+                "--legacy-in-place cannot represent a configuration-sized "
+                "multi-target PLIC; use the default isolated MOSAIC output"
+            )
+
+        # Firmware/BSP artifacts are another projection of the same resolved
+        # MosaicConfig as the RTL.  Keep them inside the content-addressed
+        # bundle so concurrent/different configurations cannot share stale
+        # topology headers, ISA flags, link maps, or boot-image manifests.
+        if isolated:
+            import software_gen
+
+            software_out = generated_root / "sw"
+            software_gen.generate_software_artifacts(
+                kwargs["mosaic_cfg"], software_out
+            )
+            for output in sorted(path for path in software_out.rglob("*") if path.is_file()):
+                relative = output.relative_to(software_out)
+                generated_records.append(
+                    {
+                        "logical_path": str(
+                            pathlib.Path("sw/firmware/generated") / relative
+                        ),
+                        "path": str(output.resolve()),
+                        "generator": "software_gen",
+                    }
+                )
+            print(
+                f"{Colors.GREEN}[MCU-GEN]{Colors.RESET} "
+                "Generated topology-specific software contract"
+            )
+
+    if isolated:
+        from build_manifest import resolved_manifest, write_manifest
+
+        base_cfg = str(args.base_config) if args.base_config else "configs/general.hjson"
+        manifest = resolved_manifest(
+            kwargs=kwargs,
+            config_path=args.mosaic_config,
+            base_config=base_cfg,
+            pads_cfg=args.pads_cfg,
+            repo_root=repo_root,
+            output_root=args.output_root,
+            generated_files=generated_records,
+            pinned_identity=bundle,
+        )
+        write_manifest(manifest_path, manifest)
+        print(f"MOSAIC_MANIFEST={manifest_path}")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
 
 
 if __name__ == "__main__":

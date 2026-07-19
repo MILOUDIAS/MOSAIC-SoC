@@ -26,8 +26,13 @@ module peripheral_subsystem
 
     //PLIC
     input  logic [NEXT_INT_RND-1:0] intr_vector_ext_i,
+% if is_mc:
+    output logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] irq_plic_o,
+    output logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] msip_o,
+% else:
     output logic                irq_plic_o,
     output logic                msip_o,
+% endif
 
     input  logic                w25q128jw_controller_intr_i,
 

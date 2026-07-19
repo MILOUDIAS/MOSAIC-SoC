@@ -27,18 +27,24 @@ if [ -n "$VPIN" ] && [ -x "$VPIN/usr/bin/verilator" ]; then
 fi
 MOSAIC_CFG="${MOSAIC_CFG:-configs/mosaic_titan_log.yaml}"
 OBJ="$HERE/obj_dir_titan"
+PY="$REPO/.venv/bin/python"
+[ -x "$PY" ] || PY=python3
 
 echo "### [1/4] generating RTL ($MOSAIC_CFG: 2x cv32e20 + 2x cv32e40x, all TITAN) ..."
-TPLS=$(find . \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
+TPLS=$(find . \( -path './build/*' -o -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
     -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
     -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
-python3 util/xheep_gen/mcu_gen.py --mosaic_config "$MOSAIC_CFG" --base_config configs/general.hjson \
-    --pads_cfg configs/pad_cfg.py --outtpl "$TPLS" --externaltpl "" >/dev/null 2>&1 || { echo "RTL gen failed"; exit 1; }
+"$PY" util/xheep_gen/mcu_gen.py --mosaic_config "$MOSAIC_CFG" --base_config configs/general.hjson \
+    --pads_cfg configs/pad_cfg.py --output-root build/mosaic --outtpl "$TPLS" --externaltpl "" >/dev/null 2>&1 || { echo "RTL gen failed"; exit 1; }
+MANIFEST="$("$PY" util/xheep_gen/build_manifest.py locate --config "$MOSAIC_CFG" \
+    --base-config configs/general.hjson --pads-cfg configs/pad_cfg.py --repo-root "$REPO")" || exit 1
 echo "###       running FuseSoC setup (register generators + filelist) ..."
 RISCV_XHEEP="${RISCV_XHEEP:-$(dirname "$(dirname "$TC")")}" \
 COMPILER_PREFIX="${COMPILER_PREFIX:-$(basename "$TC" | sed 's/elf$//')}" \
-    scripts/fusesoc-setup.sh > "$HERE/fusesoc-setup.log" 2>&1 \
+    scripts/fusesoc-setup.sh --manifest "$MANIFEST" > "$HERE/fusesoc-setup.log" 2>&1 \
     || { echo "FuseSoC setup failed — see $HERE/fusesoc-setup.log"; exit 1; }
+BUILD_ROOT="$(sed -n 's/^FUSESOC_BUILD_ROOT=//p' "$HERE/fusesoc-setup.log" | tail -1)"
+[ -n "$BUILD_ROOT" ] && [ -d "$BUILD_ROOT" ] || { echo "FuseSoC build root missing"; exit 1; }
 
 echo "### [2/4] assembling the SMP program (one .S, mhartid-branched, rv32i) ..."
 # rv32i_zicsr: the program reads mhartid (csrr); modern binutils requires the
@@ -51,7 +57,8 @@ echo "    firmware: $HERE/prog_titan/titan_smp.hex"
 
 echo "### [3/4] building the full-SoC Verilator model (this takes a few minutes) ..."
 rm -rf "$OBJ"
-python3 "$HERE/gen_filelist.py" "$REPO" > "$HERE/soc.f" || { echo "filelist gen failed"; exit 1; }
+"$PY" "$HERE/gen_filelist.py" "$REPO" --manifest "$MANIFEST" --build-root "$BUILD_ROOT" \
+    > "$HERE/soc.f" || { echo "filelist gen failed"; exit 1; }
 verilator --binary -j 0 --top-module tb_top \
     --Mdir "$OBJ" -o Vtb_top --timescale 1ns/1ps \
     -GUSE_EXTERNAL_DEVICE_EXAMPLE=1 -GJTAG_DPI=0 \
@@ -60,9 +67,11 @@ verilator --binary -j 0 --top-module tb_top \
 
 echo "### [4/4] running the simulation ..."
 "$OBJ/Vtb_top" +firmware="$HERE/prog_titan/titan_smp.hex" +boot_sel=0 +maxcycles=300000 +verbose 2>&1 | tee "$HERE/sim-titan.log" | tail -30
+SIM_RC=${PIPESTATUS[0]}
 echo ""
-if grep -q "EXIT SUCCESS" "$HERE/sim-titan.log"; then
+if [ "$SIM_RC" -eq 0 ] && grep -q "EXIT SUCCESS" "$HERE/sim-titan.log"; then
   echo "### RESULT: EXIT SUCCESS — 4 TITAN cores cooperated over the TDU ($MOSAIC_CFG) ✓"
 else
-  echo "### RESULT: no EXIT SUCCESS (see $HERE/sim-titan.log)"
+  echo "### RESULT: simulation failed or no EXIT SUCCESS (see $HERE/sim-titan.log)"
+  exit 1
 fi

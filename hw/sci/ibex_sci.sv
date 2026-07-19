@@ -75,6 +75,12 @@ module ibex_sci
   logic [31:0] data_addr;
   logic [31:0] data_wdata;
   logic [31:0] data_rdata;
+  logic        ibex_core_sleep;
+
+  // The native signal only reports architectural sleep.  A MOSAIC worker
+  // held behind fetch_enable_i is dormant as well, including immediately
+  // after reset and after a TDU PARK_REQ.
+  assign core_sleep_o = ~fetch_enable_i | ibex_core_sleep;
 
   // ── Ibex core ────────────────────────────────────────────────────
   ibex_top #(
@@ -90,7 +96,9 @@ module ibex_sci
       .SecureIbex     (SecureIbex)
   ) i_core (
       .clk_i (clk_i),
-      .rst_ni(rst_ni),
+      // Reset-hold while parked makes TDU PARK/WAKE repeatable rather than
+      // resuming after the worker firmware's terminal spin loop.
+      .rst_ni(rst_ni & fetch_enable_i),
 
       .test_en_i (1'b0),
       // ICache tag/data RAM config — unused (ICache=0); tie off / leave open
@@ -149,10 +157,10 @@ module ibex_sci
       .alert_minor_o         (),
       .alert_major_internal_o(),
       .alert_major_bus_o     (),
-      .core_sleep_o          (core_sleep_o),
+      .core_sleep_o          (ibex_core_sleep),
 
       // DFT
-      .scan_rst_ni(rst_ni),
+      .scan_rst_ni(rst_ni & fetch_enable_i),
 
       // Lockstep / shadow outputs — unused (SecureIbex=0)
       .lockstep_cmp_en_o       (),

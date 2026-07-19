@@ -31,7 +31,7 @@ STUB_HEADER = (
 )
 
 
-def build_topology(num_harts: int, mem_size: int, route_algo: str = "XY") -> dict:
+def build_topology(num_harts: int, mem_size: int, route_algo: str = "ID") -> dict:
     """The compact MOSAIC floogen topology as a plain dict (YAML-ready).
 
     Managers: hart0..hartN (per-hart instr+data merged upstream by an
@@ -39,6 +39,11 @@ def build_topology(num_harts: int, mem_size: int, route_algo: str = "XY") -> dic
     `mem` = [0, mem_size), `periph` = everything above (the tier demux in
     front of the fabric already peeled off the EXT space).
     """
+    if route_algo != "ID":
+        raise ValueError(
+            "compact MOSAIC FlooNoC has one router and supports only ID routing"
+        )
+
     endpoints = []
     for h in range(num_harts):
         endpoints.append(
@@ -154,27 +159,40 @@ def _find_floogen(repo_root: Path) -> str:
     )
 
 
-def generate(cfg, num_harts: int, mem_size: int, repo_root) -> None:
+def generate(
+    cfg,
+    num_harts: int,
+    mem_size: int,
+    repo_root,
+    *,
+    output_dir=None,
+    work_dir=None,
+) -> None:
     """Emit the fabric files for the active config (real NoC or stubs).
 
     :param cfg: parsed MosaicConfig (bus/bus_opts fields used)
     :param num_harts: total hart count
     :param mem_size: total RAM size in bytes (the mem endpoint range)
     :param repo_root: repository root path
+    :param output_dir: optional isolated output directory.  When omitted, keep
+        the historical template-adjacent location for compatibility.
+    :param work_dir: optional directory for the generated floogen YAML.
     """
     import yaml
 
     repo_root = Path(repo_root)
-    outdir = repo_root / FABRIC_DIR
+    outdir = Path(output_dir) if output_dir is not None else repo_root / FABRIC_DIR
 
     if getattr(cfg, "bus", "obi") != "floonoc":
         _write_stubs(outdir)
         return
 
-    route_algo = (cfg.bus_opts or {}).get("floonoc", {}).get("route_algo", "XY")
+    route_algo = (cfg.bus_opts or {}).get("floonoc", {}).get("route_algo", "ID")
     topo = build_topology(num_harts, mem_size, route_algo)
 
-    cfg_dir = repo_root / "build" / "floonoc"
+    cfg_dir = (
+        Path(work_dir) if work_dir is not None else repo_root / "build" / "floonoc"
+    )
     cfg_dir.mkdir(parents=True, exist_ok=True)
     cfg_file = cfg_dir / "mosaic_noc.yml"
     cfg_file.write_text(yaml.safe_dump(topo, sort_keys=False))

@@ -88,7 +88,8 @@ module serv_sci #(
         .reset_pc  (RESET_PC),
         .with_c    (COMPRESSED),
         .with_csr  (WITH_CSR),
-        .with_mdu  (MDU)
+        .with_mdu  (MDU),
+        .pre_register(PRE_REGISTER)
     ) i_servile (
         .i_clk       (clk_i),
         // Active-high reset. Held asserted while the system is in reset OR the

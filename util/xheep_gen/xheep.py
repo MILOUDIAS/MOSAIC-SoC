@@ -26,6 +26,31 @@ class CpuConfig:
     hart_id_base: int = 0  # first hart ID assigned to this group
     params: Dict[str, Any] = field(default_factory=dict)  # per-core-type params
 
+    VALID_ROLES = frozenset({"titan", "atlas", "nano"})
+
+    def __post_init__(self):
+        if not isinstance(self.cpu, CPU):
+            raise TypeError(f"CpuConfig.cpu should be of type CPU not {type(self.cpu)}")
+        if self.role not in self.VALID_ROLES:
+            raise ValueError(
+                f"Invalid CPU role '{self.role}'. Must be one of: "
+                f"{', '.join(sorted(self.VALID_ROLES))}"
+            )
+        if (
+            not isinstance(self.count, int)
+            or isinstance(self.count, bool)
+            or self.count < 1
+        ):
+            raise ValueError(f"CPU count must be a positive integer, got {self.count!r}")
+        if (
+            not isinstance(self.hart_id_base, int)
+            or isinstance(self.hart_id_base, bool)
+            or self.hart_id_base < 0
+        ):
+            raise ValueError(
+                f"hart_id_base must be a non-negative integer, got {self.hart_id_base!r}"
+            )
+
     def hart_ids(self) -> List[int]:
         """Return the list of hart IDs for this group."""
         return list(range(self.hart_id_base, self.hart_id_base + self.count))
@@ -102,6 +127,12 @@ class XHeep:
         """Add a CPU config group to the system."""
         if not isinstance(cfg, CpuConfig):
             raise TypeError(f"Expected CpuConfig, got {type(cfg)}")
+        expected_base = self.num_harts()
+        if cfg.hart_id_base != expected_base:
+            raise ValueError(
+                "CPU groups must form a contiguous, non-overlapping hart topology: "
+                f"expected hart_id_base {expected_base}, got {cfg.hart_id_base}"
+            )
         self._cpus.append(cfg)
         # Keep _cpu pointing to the first (TITAN) core for backward compat
         if self._cpu is None:
@@ -109,9 +140,20 @@ class XHeep:
 
     def set_cpus(self, cpus: List[CpuConfig]):
         """Set the full list of CPU config groups."""
-        self._cpus = list(cpus)
-        if cpus:
-            self._cpu = cpus[0].cpu
+        checked = list(cpus)
+        expected_base = 0
+        for cfg in checked:
+            if not isinstance(cfg, CpuConfig):
+                raise TypeError(f"Expected CpuConfig, got {type(cfg)}")
+            if cfg.hart_id_base != expected_base:
+                raise ValueError(
+                    "CPU groups must form a contiguous, non-overlapping hart topology: "
+                    f"expected hart_id_base {expected_base}, got {cfg.hart_id_base}"
+                )
+            expected_base += cfg.count
+        self._cpus = checked
+        if checked:
+            self._cpu = checked[0].cpu
 
     def cpus(self) -> List[CpuConfig]:
         """:return: list of CPU config groups."""
@@ -122,8 +164,14 @@ class XHeep:
         return sum(g.count for g in self._cpus)
 
     def is_multi_core(self) -> bool:
-        """True if multiple core groups or multiple total cores."""
-        return len(self._cpus) > 1 or self.num_harts() > 1
+        """True when the explicit per-hart topology renderer must be used.
+
+        A one-hart MOSAIC topology still needs the topology renderer: it may be
+        an SCI-wrapped core and it carries role, boot-address and wake metadata
+        that the legacy x-heep scalar CPU path cannot represent.  Legacy HJSON
+        configurations, which only call :meth:`set_cpu`, retain the scalar path.
+        """
+        return bool(self._cpus)
 
     # ------------------------------------------------------------
     # CORE-V eXtension Interface (CV-X-IF)
@@ -176,8 +224,9 @@ class XHeep:
         """Number of master ports on the internal system crossbar.
 
         Mirrors ``SYSTEM_XBAR_NMASTER`` in ``core_v_mini_mcu_pkg.sv.tpl``:
-        2 OBI ports (instr + data) per hart, 1 debug master, and 3 ports
-        (read/write/addr) per DMA master port.
+        2 OBI ports (instr + data) per hart and 1 debug master. Explicit
+        MOSAIC topologies use iDMA's read/write pair per stream; legacy scalar
+        x-heep configurations retain the simple DMA's read/write/addr triplet.
 
         :return: the number of internal crossbar master ports
         :rtype: int
@@ -188,7 +237,8 @@ class XHeep:
             dma = self._base_peripheral_domain.get_dma()
             if dma is not None:
                 dma_ports = int(dma.get_num_master_ports())
-        return 2 * nh + 1 + 3 * dma_ports
+        dma_obi_ports = 2 if self.is_multi_core() else 3
+        return 2 * nh + 1 + dma_obi_ports * dma_ports
 
     # ------------------------------------------------------------
     # Memory

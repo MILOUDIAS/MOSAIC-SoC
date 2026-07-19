@@ -9,6 +9,7 @@
 soc:
   name: mosaic_cva6
   pdk: gf180mcu
+  profile: testbench
 
   cores:
     - ip: cva6            # TITAN — orchestrator (hart 0); AXI→OBI bridged, sim-only

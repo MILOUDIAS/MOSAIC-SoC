@@ -38,7 +38,7 @@ soc:
   bus: floonoc           # floogen AXI NoC + OBI<->AXI bridges
   bus_opts:
     floonoc:
-      route_algo: XY     # single router today -> ID table; knob for future meshes
+      route_algo: ID     # compact topology is a single ID-table router
       endpoints: compact # nh+1 managers / 2 subordinates
 
   scheduler:

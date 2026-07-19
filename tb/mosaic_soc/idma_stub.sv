@@ -23,8 +23,6 @@ module idma_xheep_wrapper #(
     input obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_read_resp_i,
     output obi_req_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_write_req_o,
     input obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_write_resp_i,
-    output obi_req_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_addr_req_o,
-    input obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_addr_resp_i,
     output fifo_req_t [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] hw_fifo_req_o,
     input fifo_resp_t [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] hw_fifo_resp_i,
     input logic [GLOBAL_SLOT_NUM-1:0] global_trigger_slot_i,
@@ -45,7 +43,6 @@ module idma_xheep_wrapper #(
   // No DMA bus activity, no FIFO traffic, no interrupts.
   assign dma_read_req_o    = '0;
   assign dma_write_req_o   = '0;
-  assign dma_addr_req_o    = '0;
   assign hw_fifo_req_o     = '0;
   assign dma_done_intr_o   = 1'b0;
   assign dma_window_intr_o = 1'b0;

@@ -17,10 +17,9 @@ meta:
 
 DESIGN_NAME: core_v_mini_mcu
 
-# The flattened SoC RTL (produced by `make flatten` / sv2v, or feed the SV
-# directly with USE_SLANG). core_v_mini_mcu is the top module hardened here.
+# Hash-checked flattened RTL supplied by the PHYSICAL_BUNDLE preflight.
 VERILOG_FILES:
-- dir::../../build/mosaic/design.v
+- $MOSAIC_FLATTENED_SOC_RTL
 
 # x-heep is package-heavy SystemVerilog. Enable slang to feed Yosys the SV
 # directly instead of pre-flattening with sv2v.
@@ -75,7 +74,7 @@ PDN_CORE_HORIZONTAL_LAYER: Metal3
 # Workshop deliverable posture — review before a real tapeout (CLAUDE.md
 # mandates DRC/LVS-clean signoff). These suppress GF180 SRAM-macro false
 # positives; the IO-cell waivers from the Chip flow are not needed here.
-ERROR_ON_MAGIC_DRC: False
+ERROR_ON_MAGIC_DRC: True
 MAGIC_GDS_FLATGLOB:
 - "*_CDNS_*"
 - "*$$*"
@@ -107,14 +106,13 @@ MAGIC_GDS_FLATGLOB:
 KLAYOUT_FILLER_OPTIONS:
   Metal2_ignore_active: true
 
-# SRAM hard macro(s) from OpenRAM. Same macros as config.yaml (Chip flow).
-# After generating with OpenRAM, update paths below.
+# Hash-checked 32-KiB SRAM views from PHYSICAL_BUNDLE.
 MACROS:
   mosaic_sram:
-    gds: $OPENRAM_OUT/mosaic_sram_4k.gds
-    lef: $OPENRAM_OUT/mosaic_sram_4k.lef
-    lib: $OPENRAM_OUT/mosaic_sram_4k__tt_25C_3v3.lib
-    verilog: $OPENRAM_OUT/mosaic_sram_4k.v
+    gds: $MOSAIC_SRAM_GDS
+    lef: $MOSAIC_SRAM_LEF
+    lib: $MOSAIC_SRAM_LIB
+    verilog: $MOSAIC_SRAM_VERILOG
     power_pin: VDD
     ground_pin: GND
     size: 1
@@ -123,6 +121,6 @@ MACROS:
 
 PDN_MACRO_CONNECTIONS:
   - "mosaic_sram VDD $::env(VDD_NET)"
-  - "mosaic_sram VSS $::env(GND_NET)"
+  - "mosaic_sram GND $::env(GND_NET)"
 
 PDN_CFG: dir::pdn_cfg.tcl

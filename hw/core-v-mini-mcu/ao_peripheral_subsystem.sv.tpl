@@ -5,6 +5,13 @@
 <%
   base_peripheral_domain = xheep.get_base_peripheral_domain()
   is_mc = xheep.is_multi_core()
+  tdu_enabled = is_mc and bool(xheep.get_extension("tdu_enabled"))
+  sched_mode = xheep.get_extension("sched_mode") or "static"
+  sched_mode_sv = {
+      "static": "tdu_pkg::SCHED_STATIC",
+      "dynamic": "tdu_pkg::SCHED_DYNAMIC",
+      "power-aware": "tdu_pkg::SCHED_POWER_AWARE",
+  }[sched_mode]
   nh = xheep.num_harts()
 %>
 
@@ -83,8 +90,10 @@ module ao_peripheral_subsystem
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_read_resp_i,
     output obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_write_req_o,
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_write_resp_i,
+% if not is_mc:
     output obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_addr_req_o,
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_addr_resp_i,
+% endif
     output logic                                                      dma_done_intr_o,
     output logic                                                      dma_window_intr_o,
 
@@ -121,10 +130,18 @@ module ao_peripheral_subsystem
 
 % if is_mc:
     ,
+    // Per-hart core-local timer and software interrupts (CLINT-compatible)
+    output logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] clint_timer_irq_o,
+    output logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] clint_software_irq_o,
+    output logic [63:0]                                clint_mtime_o
+% endif
+% if tdu_enabled:
+    ,
     // MOSAIC Task Dispatch Unit (multi-core only)
     input  logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] tdu_core_running_i,
     input  logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] tdu_core_sleep_i,
     output logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] tdu_core_wake_o,
+    output logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] tdu_core_park_o,
     output logic                                      tdu_irq_o
 % endif
 );
@@ -450,9 +467,10 @@ module ao_peripheral_subsystem
 % if base_peripheral_domain.contains_peripheral('dma') and xheep.get_base_peripheral_domain().get_dma().get_is_included():
 % if is_mc:
 
-  // MOSAIC-SoC: iDMA replaces x-heep's simple DMA in multi-core mode.
-  // The wrapper matches the dma_subsystem port interface so the
-  // surrounding template is unchanged. See hw/vendor/mosaic/idma/.
+  // MOSAIC-SoC: iDMA replaces x-heep's simple DMA for every explicit
+  // topology. DMA selection is independent of the optional TDU.
+  // It exposes one OBI read/write pair per stream; the legacy simple-DMA
+  // address master is absent from explicit topologies.
   idma_xheep_wrapper #(
       .reg_req_t(reg_pkg::reg_req_t),
       .reg_rsp_t(reg_pkg::reg_rsp_t),
@@ -472,8 +490,6 @@ module ao_peripheral_subsystem
       .dma_read_resp_i,
       .dma_write_req_o,
       .dma_write_resp_i,
-      .dma_addr_req_o,
-      .dma_addr_resp_i,
       .hw_fifo_req_o,
       .hw_fifo_resp_i,
       .external_hw2reg_i(external_dma_hw2reg),
@@ -527,7 +543,9 @@ module ao_peripheral_subsystem
 % else:
   assign dma_read_req_o     = '0;
   assign dma_write_req_o    = '0;
+% if not is_mc:
   assign dma_addr_req_o     = '0;
+% endif
   assign hw_fifo_req_o      = '0;
   assign dma_done_intr_o    = '0;
   assign dma_window_intr_o  = '0;
@@ -571,47 +589,72 @@ module ao_peripheral_subsystem
 % endif
 
 % if is_mc:
-  // ── MOSAIC Task Dispatch Unit (TDU) ─────────────────────────────
-  // The TDU is tapped off the AO reg bus before the main addr_decode.
-  // Addresses in [TDU_START_ADDRESS, TDU_END_ADDRESS) go to the TDU;
-  // everything else goes to the existing AO peripheral demux.
+  // ── MOSAIC multi-hart platform register windows ─────────────────
+  // CLINT is always present for an explicit hart topology. TDU follows
+  // scheduler.tdu. Both are tapped before the legacy AO decoder.
+  logic clint_select;
+  reg_pkg::reg_req_t clint_req;
+  reg_pkg::reg_rsp_t clint_rsp;
+  reg_pkg::reg_req_t ao_periph_req;
+  reg_pkg::reg_rsp_t ao_periph_rsp;
+% if tdu_enabled:
   logic tdu_select;
   reg_pkg::reg_req_t tdu_req;
   reg_pkg::reg_rsp_t tdu_rsp;
-  reg_pkg::reg_req_t ao_periph_req;
-  reg_pkg::reg_rsp_t ao_periph_rsp;
+% endif
 
+  assign clint_select = (perconv2regdemux_req.addr >= core_v_mini_mcu_pkg::CLINT_START_ADDRESS) &&
+                        (perconv2regdemux_req.addr <  core_v_mini_mcu_pkg::CLINT_END_ADDRESS);
+  assign clint_req.valid = perconv2regdemux_req.valid & clint_select;
+  assign clint_req.write = perconv2regdemux_req.write;
+  assign clint_req.wstrb = perconv2regdemux_req.wstrb;
+  assign clint_req.addr  = perconv2regdemux_req.addr - core_v_mini_mcu_pkg::CLINT_START_ADDRESS;
+  assign clint_req.wdata = perconv2regdemux_req.wdata;
+
+% if tdu_enabled:
   assign tdu_select = (perconv2regdemux_req.addr >= core_v_mini_mcu_pkg::TDU_START_ADDRESS) &&
                       (perconv2regdemux_req.addr <  core_v_mini_mcu_pkg::TDU_END_ADDRESS);
-
-  // Route request to TDU or main AO demux. The TDU decodes its registers by
-  // OFFSET (TDU_*_OFFSET = 0x00..), so the full SoC address must have the window
-  // base subtracted here — otherwise the TDU never matches and is unreachable
-  // through the bus (caught by tb/tdu/soc).
   assign tdu_req.valid  = perconv2regdemux_req.valid & tdu_select;
   assign tdu_req.write  = perconv2regdemux_req.write;
   assign tdu_req.wstrb  = perconv2regdemux_req.wstrb;
   assign tdu_req.addr   = perconv2regdemux_req.addr - core_v_mini_mcu_pkg::TDU_START_ADDRESS;
   assign tdu_req.wdata  = perconv2regdemux_req.wdata;
+% endif
 
-  assign ao_periph_req.valid = perconv2regdemux_req.valid & ~tdu_select;
+  assign ao_periph_req.valid = perconv2regdemux_req.valid & ~clint_select
+% if tdu_enabled:
+                               & ~tdu_select
+% endif
+                               ;
   assign ao_periph_req.write = perconv2regdemux_req.write;
   assign ao_periph_req.wstrb = perconv2regdemux_req.wstrb;
   assign ao_periph_req.addr  = perconv2regdemux_req.addr;
   assign ao_periph_req.wdata = perconv2regdemux_req.wdata;
 
-  // Merge responses
-  assign regdemux2perconv_resp = tdu_select ? tdu_rsp : ao_periph_rsp;
+  always_comb begin
+    regdemux2perconv_resp = ao_periph_rsp;
+    if (clint_select) regdemux2perconv_resp = clint_rsp;
+% if tdu_enabled:
+    if (tdu_select) regdemux2perconv_resp = tdu_rsp;
+% endif
+  end
 
-  // Override the perconv2regdemux_req that feeds the main addr_decode
-  // with the filtered version (TDU requests removed).
-  `ifndef SYNTHESIS
-  // The ao_periph_req replaces perconv2regdemux_req below; we use a
-  // generate-block alias to avoid renaming the existing signal.
-  `endif
-
-  tdu #(
+  mosaic_clint #(
       .NUM_HARTS(core_v_mini_mcu_pkg::NUM_HARTS)
+  ) mosaic_clint_i (
+      .clk_i,
+      .rst_ni,
+      .reg_req_i     (clint_req),
+      .reg_rsp_o     (clint_rsp),
+      .software_irq_o(clint_software_irq_o),
+      .timer_irq_o   (clint_timer_irq_o),
+      .mtime_o       (clint_mtime_o)
+  );
+
+% if tdu_enabled:
+  tdu #(
+      .NUM_HARTS(core_v_mini_mcu_pkg::NUM_HARTS),
+      .RESET_SCHED_MODE(${sched_mode_sv})
   ) tdu_i (
       .clk_i          (clk_i),
       .rst_ni         (rst_ni),
@@ -620,11 +663,10 @@ module ao_peripheral_subsystem
       .core_running_i (tdu_core_running_i),
       .core_sleep_i   (tdu_core_sleep_i),
       .core_wake_o    (tdu_core_wake_o),
+      .core_park_o    (tdu_core_park_o),
       .tdu_irq_o      (tdu_irq_o)
   );
-
-  // Route the filtered request to the main addr_decode
-  // (replaces perconv2regdemux_req in the addr_decode below)
+% endif
 % endif
 
 endmodule : ao_peripheral_subsystem

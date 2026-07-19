@@ -4,6 +4,7 @@
 soc:
   name: mosaic_poc_alpha
   pdk: gf180mcu
+  target: tapeout        # strict GF180/OBI/32-KiB capability gate
 
   cores:
     - ip: cv32e20         # big core — CVE2, 2-stage, RV32E/M

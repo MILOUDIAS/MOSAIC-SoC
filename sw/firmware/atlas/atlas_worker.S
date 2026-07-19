@@ -29,9 +29,18 @@
 //      [31:16] task_id, [15:11] core_hint, [10:8] prio
 // @see sw/firmware/titan/titan_main.c — dispatch + completion poll
 
-#define TDU_TASK_POP     0x200A0014
-#define SENTINEL_BASE    0x00003000
-#define RESULT_BASE      0x00003100
+#if defined(MOSAIC_USE_BUILD_GENERATED_HEADERS)
+#include <mosaic_memory_map.inc>
+#define TDU_TASK_POP  MOSAIC_ASM_TDU_TASK_POP
+#define TDU_PARK_REQ  MOSAIC_ASM_TDU_PARK_REQ
+#define SENTINEL_BASE MOSAIC_ASM_SENTINEL_BASE
+#define RESULT_BASE   MOSAIC_ASM_RESULT_BASE
+#else
+#define TDU_TASK_POP  0x200A0014
+#define TDU_PARK_REQ  0x200A0060
+#define SENTINEL_BASE 0x00003000
+#define RESULT_BASE   0x00003100
+#endif
 #define ATLAS_SENTINEL   0xA71A5000
 #define NANO_SENTINEL    0x4E414E00
 #define TASK_SIGNAL_PROC 0x0002
@@ -95,5 +104,12 @@ mul_skip:
     add     t1, t1, s1
     sw      s3, 0(t1)
 
-    // ── Park (worker done; a real system would WFI for the next wake) ─
+    // ── Park and re-arm for the next dispatch ────────────────────────
+    // s1 is slot*4 and the slot is the targeted hart id.  PARK_REQ is
+    // sampled only after the result and sentinel stores above have completed.
+    srli    t2, s1, 2
+    li      t3, 1
+    sll     t3, t3, t2
+    li      t4, TDU_PARK_REQ
+    sw      t3, 0(t4)
 9:  j       9b

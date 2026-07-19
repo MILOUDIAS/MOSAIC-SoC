@@ -24,6 +24,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "soc": {
         "name": "mosaic_soc",
         "pdk": "gf180mcu",
+        "target": "rtl",
         "cores": [],
         "memory": {"sram_kb": 32, "boot_rom_kb": 2},
         "bus": "obi",
@@ -32,17 +33,32 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     }
 }
 
-# Core type → default ISA and per-core params
+# Core type → default ISA and per-core params.
+# ONLY parameters proven by shipped configs belong here: every non-standard
+# key flows verbatim into group.params and must match what the generator's
+# CPU classes / SCI template branches expect (e.g. cv32e20 rv32m is an ENUM
+# STRING like "RV32MFast" — a bare True crashes mcu_gen; leave such knobs to
+# explicit user configs).
+# `sim_only` is harness METADATA (documentation + tapeout-preset guards); it is
+# stripped before the YAML is written so mcu_gen never sees it.
 CORE_DEFAULTS: Dict[str, Dict[str, Any]] = {
-    "cv32e20":  {"isa": "rv32emc", "rv32e": True, "rv32m": True},
-    "cv32e40p": {"isa": "rv32imc", "fpu": False, "zfinx": False, "corev_pulp": False},
+    "cv32e20":  {"isa": "rv32emc"},
+    "cv32e40p": {"isa": "rv32imc"},
     "cv32e40px": {"isa": "rv32imc"},
     "cv32e40x": {"isa": "rv32imc"},
     "ibex":     {"isa": "rv32imc"},
     "fazyrv":   {"isa": "rv32i", "chunksize": 8},
     "serv":     {"isa": "rv32i"},
     "qerv":     {"isa": "rv32i"},
+    "picorv32": {"isa": "rv32i"},
+    "snitch":   {"isa": "rv32i"},   # RV32I: acc port tied off (RVM needs snitch_shared_muldiv)
+    "cva6":     {"isa": "rv32imc", "sim_only": True},
+    "rocket":   {"isa": "rv64imc", "sim_only": True},
+    "boom":     {"isa": "rv64imc", "sim_only": True},
 }
+
+# Metadata keys stripped from core entries before YAML emission.
+_META_KEYS = {"sim_only"}
 
 # Presets: common SoC configurations
 PRESETS: Dict[str, Dict[str, Any]] = {
@@ -50,10 +66,11 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "soc": {
             "name": "mosaic_poc_alpha",
             "pdk": "gf180mcu",
+            "target": "tapeout",
             "cores": [
                 {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
-                {"ip": "fazyrv", "isa": "rv32i", "chunksize": 8, "count": 2, "role": "atlas"},
-                {"ip": "serv", "isa": "rv32i", "count": 4, "role": "nano"},
+                {"ip": "fazyrv", "isa": "rv32i", "chunksize": 8, "count": 2, "role": "atlas", "boot_addr": 0x1000},
+                {"ip": "serv", "isa": "rv32i", "count": 4, "role": "nano", "boot_addr": 0x2000},
             ],
             "memory": {"sram_kb": 32, "boot_rom_kb": 2},
             "bus": "obi",
@@ -65,13 +82,14 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "soc": {
             "name": "mosaic_minimal",
             "pdk": "gf180mcu",
+            "target": "rtl",
             "cores": [
                 {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
-                {"ip": "serv", "isa": "rv32i", "count": 1, "role": "nano"},
+                {"ip": "serv", "isa": "rv32i", "count": 1, "role": "nano", "boot_addr": 0x800},
             ],
             "memory": {"sram_kb": 8, "boot_rom_kb": 1},
             "bus": "obi",
-            "scheduler": {"tdu": False, "mode": "static"},
+            "scheduler": {"tdu": True, "mode": "static"},
             "peripherals": ["uart"],
         }
     },
@@ -79,12 +97,13 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "soc": {
             "name": "mosaic_max_cores",
             "pdk": "gf180mcu",
+            "target": "rtl",
             "cores": [
                 {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
-                {"ip": "ibex", "isa": "rv32imc", "count": 1, "role": "atlas"},
-                {"ip": "fazyrv", "isa": "rv32i", "chunksize": 8, "count": 2, "role": "atlas"},
-                {"ip": "qerv", "isa": "rv32i", "count": 2, "role": "nano"},
-                {"ip": "serv", "isa": "rv32i", "count": 4, "role": "nano"},
+                {"ip": "ibex", "isa": "rv32imc", "count": 1, "role": "atlas", "boot_addr": 0x1000},
+                {"ip": "fazyrv", "isa": "rv32i", "chunksize": 8, "count": 2, "role": "atlas", "boot_addr": 0x2000},
+                {"ip": "qerv", "isa": "rv32i", "count": 2, "role": "nano", "boot_addr": 0x3000},
+                {"ip": "serv", "isa": "rv32i", "count": 4, "role": "nano", "boot_addr": 0x4000},
             ],
             "memory": {"sram_kb": 64, "boot_rom_kb": 2},
             "bus": "obi",
@@ -92,7 +111,50 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             "peripherals": ["uart", "gpio", "timer", "spi"],
         }
     },
+    # SIM-ONLY presets (cva6/rocket/boom are excluded from the GF180 tapeout)
+    "sim_zoo": {
+        "soc": {
+            "name": "mosaic_sim_zoo",
+            "pdk": "gf180mcu",
+            "profile": "testbench",
+            "target": "simulation",
+            "cores": [
+                {"ip": "cva6", "isa": "rv32imc", "count": 1, "role": "titan"},
+                {"ip": "snitch", "isa": "rv32i", "count": 1, "role": "atlas",
+                 "boot_addr": 0x1000},
+                {"ip": "picorv32", "isa": "rv32i", "count": 1, "role": "nano",
+                 "boot_addr": 0x2000},
+            ],
+            "memory": {"sram_kb": 32, "boot_rom_kb": 2},
+            "bus": "obi",
+            "scheduler": {"tdu": True, "mode": "dynamic"},
+            "peripherals": ["uart", "gpio", "timer", "spi"],
+        }
+    },
+    "berkeley": {
+        "soc": {
+            "name": "mosaic_berkeley_preset",
+            "pdk": "gf180mcu",
+            "profile": "testbench",
+            "target": "simulation",
+            "cores": [
+                {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
+                {"ip": "rocket", "isa": "rv64imc", "count": 1, "role": "atlas",
+                 "boot_addr": 0x1000},
+                {"ip": "boom", "isa": "rv64imc", "count": 1, "role": "nano",
+                 "boot_addr": 0x2000},
+            ],
+            "memory": {"sram_kb": 32, "boot_rom_kb": 2},
+            "bus": "obi",
+            "scheduler": {"tdu": True, "mode": "dynamic"},
+            "peripherals": ["uart", "gpio", "timer", "spi"],
+        }
+    },
 }
+
+# Only the canonical 32-KiB GF180/OBI PoC is within the currently qualified
+# implementation matrix.  The other presets remain useful RTL generators.
+TAPEOUT_PRESETS = {"poc"}
 
 
 class ConfigAuthor:
@@ -126,6 +188,7 @@ class ConfigAuthor:
         sched_mode: str = "static",
         peripherals: Optional[List[str]] = None,
         pdk: str = "gf180mcu",
+        target: str = "rtl",
         preset: Optional[str] = None,
         output_path: Optional[Path] = None,
     ) -> SkillResult:
@@ -141,6 +204,7 @@ class ConfigAuthor:
             sched_mode: Scheduling mode (static/dynamic/power-aware).
             peripherals: List of peripheral names.
             pdk: Target PDK.
+            target: Implementation intent (rtl/simulation/tapeout).
             preset: Use a named preset instead of manual params.
             output_path: Where to write the YAML. Default: configs/<name>.yaml.
 
@@ -170,6 +234,7 @@ class ConfigAuthor:
                 "soc": {
                     "name": name,
                     "pdk": pdk,
+                    "target": target,
                     "cores": [],
                     "memory": {"sram_kb": sram_kb, "boot_rom_kb": boot_rom_kb},
                     "bus": bus,
@@ -179,18 +244,72 @@ class ConfigAuthor:
             }
 
             # Fill core defaults
+            next_worker_boot = 0x1000
+            used_worker_boots = set()
+            for core in cores:
+                if core.get("role") == "titan" or "boot_addr" not in core:
+                    continue
+                try:
+                    address = (
+                        int(core["boot_addr"], 0)
+                        if isinstance(core["boot_addr"], str)
+                        else core["boot_addr"]
+                    )
+                except (TypeError, ValueError):
+                    continue  # authoritative validation reports the bad field
+                used_worker_boots.add(address)
+            has_sim_only = False
             for c in cores:
                 core_entry = dict(c)
                 ip = core_entry.get("ip", "")
                 if ip in CORE_DEFAULTS:
                     defaults = CORE_DEFAULTS[ip]
+                    has_sim_only |= bool(defaults.get("sim_only", False))
                     for k, v in defaults.items():
                         if k not in core_entry:
                             core_entry[k] = v
+                if (
+                    ip in {"rocket", "boom"}
+                    and core_entry.get("role") == "titan"
+                    and "boot_addr" not in core_entry
+                ):
+                    core_entry["boot_addr"] = 0x180
+                # A production AMP worker is reset-held until its image is
+                # dispatched.  Give every authored worker *group* a distinct,
+                # explicit SRAM image slot unless the caller chose one.  Harts
+                # within a group intentionally share that image.
+                if (
+                    core_entry.get("role") != "titan"
+                    and "boot_addr" not in core_entry
+                ):
+                    while next_worker_boot in used_worker_boots:
+                        next_worker_boot += 0x1000
+                    core_entry["boot_addr"] = next_worker_boot
+                    used_worker_boots.add(next_worker_boot)
+                    next_worker_boot += 0x1000
                 cfg["soc"]["cores"].append(core_entry)
 
-        # Validate
-        errors = validate_config(cfg)
+            # Cores whose wrappers are qualified only by the simulation
+            # harness must never silently turn an otherwise ordinary authored
+            # config into a tapeout claim.
+            if has_sim_only:
+                cfg["soc"]["profile"] = "testbench"
+                cfg["soc"]["target"] = "simulation"
+
+            # Worker harts are reset-held until dispatched, so an AMP design
+            # cannot function without the TDU.  Treat it as mandatory platform
+            # infrastructure when authoring instead of emitting a dead SoC.
+            if any(c.get("role") != "titan" for c in cfg["soc"]["cores"]):
+                cfg["soc"]["scheduler"]["tdu"] = True
+
+        # Strip harness-only metadata (mcu_gen must never see it)
+        for c in cfg["soc"]["cores"]:
+            for k in _META_KEYS:
+                c.pop(k, None)
+
+        # Validate (tapeout presets must stay free of sim-only cores)
+        allow_sim_only = preset not in TAPEOUT_PRESETS if preset else True
+        errors = validate_config(cfg, allow_sim_only=allow_sim_only)
         if errors:
             return SkillResult(
                 ok=False, skill="config-author",
@@ -212,6 +331,7 @@ class ConfigAuthor:
                 "config": cfg,
                 "core_count": sum(c.get("count", 1) for c in cfg["soc"]["cores"]),
                 "peripheral_count": len(cfg["soc"]["peripherals"]),
+                "target": cfg["soc"].get("target", "rtl"),
             },
         )
 
@@ -243,6 +363,41 @@ class ConfigAuthor:
             details={"config": cfg, "total_cores": total_cores},
         )
 
+    def wake_demo_config(self, core: str,
+                         output_path: Optional[Path] = None) -> SkillResult:
+        """Emit the canonical 3-hart TDU wake-demo config for a worker core.
+
+        Shape (programmatic clone of configs/mosaic_picorv32.yaml): 1x cv32e20
+        TITAN + 2x <core> workers at boot_addr 0x1000/0x2000, 32 KB SRAM,
+        bus obi, TDU dynamic — so tb/mosaic_soc/run.sh, the demo firmware and
+        the linker script are reused unchanged. Used by tb-smith wake-demo.
+        """
+        if core not in VALID_CORE_IPS:
+            return SkillResult(
+                ok=False, skill="config-author",
+                summary=f"Unknown core '{core}'",
+                errors=[f"Available cores: {sorted(VALID_CORE_IPS)}"],
+            )
+        isa = CORE_DEFAULTS.get(core, {}).get("isa", "rv32i")
+        cores = [
+            {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
+            {"ip": core, "isa": isa, "count": 1, "role": "atlas",
+             "boot_addr": 0x1000},
+            {"ip": core, "isa": isa, "count": 1, "role": "nano",
+             "boot_addr": 0x2000},
+        ]
+        return self.generate(
+            name=f"mosaic_{core}",
+            cores=cores,
+            sram_kb=32,
+            boot_rom_kb=2,
+            bus="obi",
+            tdu=True,
+            sched_mode="dynamic",
+            peripherals=["uart", "gpio", "timer", "spi"],
+            output_path=output_path,
+        )
+
     def list_presets(self) -> SkillResult:
         """List available preset configurations."""
         summaries = {}
@@ -255,6 +410,7 @@ class ConfigAuthor:
                 "description": f"{soc['name']}: {cores_desc}",
                 "sram_kb": soc["memory"]["sram_kb"],
                 "tdu": soc["scheduler"]["tdu"],
+                "target": soc.get("target", "rtl"),
             }
         return SkillResult(
             ok=True, skill="config-author",

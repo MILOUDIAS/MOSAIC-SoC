@@ -20,6 +20,7 @@
   memory_ss = xheep.memory_ss()
   is_mc = xheep.is_multi_core()
   nh = xheep.num_harts()
+  dma_stride = 2 if is_mc else 3
 %>
 
 module system_bus
@@ -59,8 +60,10 @@ module system_bus
     input  obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_write_req_i,
     output obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_write_resp_o,
 
+% if not is_mc:
     input  obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_addr_req_i,
     output obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] dma_addr_resp_o,
+% endif
 
     // External master ports
     input  obi_req_t  [EXT_XBAR_NMASTER_RND-1:0] ext_xbar_master_req_i,
@@ -97,10 +100,13 @@ module system_bus
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_read_resp_i,
 
     output obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_write_req_o,
-    input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_write_resp_i,
+    input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_write_resp_i
 
+% if not is_mc:
+    ,
     output obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_addr_req_o,
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_addr_resp_i
+% endif
 );
 
   import core_v_mini_mcu_pkg::*;
@@ -125,6 +131,17 @@ module system_bus
   obi_req_t [core_v_mini_mcu_pkg::SYSTEM_XBAR_NMASTER-1:0][1:0] demux_xbar_req;
   obi_resp_t [core_v_mini_mcu_pkg::SYSTEM_XBAR_NMASTER-1:0][1:0] demux_xbar_resp;
 
+% if is_mc:
+  // The legacy pin-level top exposes one instruction and one data external
+  // slave port. Arbitrate every internal hart onto those two ports while
+  // preserving response ownership; otherwise only hart 0 could access the
+  // EXT_SLAVES window and other harts would hang on undriven responses.
+  obi_req_t  [core_v_mini_mcu_pkg::NUM_HARTS-1:0] core_ext_instr_req;
+  obi_resp_t [core_v_mini_mcu_pkg::NUM_HARTS-1:0] core_ext_instr_resp;
+  obi_req_t  [core_v_mini_mcu_pkg::NUM_HARTS-1:0] core_ext_data_req;
+  obi_resp_t [core_v_mini_mcu_pkg::NUM_HARTS-1:0] core_ext_data_resp;
+% endif
+
   // Dummy external master port (to prevent unused warning)
   obi_req_t [EXT_XBAR_NMASTER_RND-1:0] ext_xbar_req_unused;
 
@@ -145,9 +162,11 @@ module system_bus
   assign int_master_req[core_v_mini_mcu_pkg::DEBUG_MASTER_IDX] = debug_master_req_i;
 
   % for i in range(dma.get_num_master_ports()):
-  assign int_master_req[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+${3*i}]  = dma_read_req_i[${i}];
-  assign int_master_req[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+${3*i}] = dma_write_req_i[${i}];
-  assign int_master_req[core_v_mini_mcu_pkg::DMA_ADDR_P0_IDX+${3*i}]  = dma_addr_req_i[${i}];
+  assign int_master_req[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+${dma_stride*i}]  = dma_read_req_i[${i}];
+  assign int_master_req[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+${dma_stride*i}] = dma_write_req_i[${i}];
+% if not is_mc:
+  assign int_master_req[core_v_mini_mcu_pkg::DMA_ADDR_P0_IDX+${dma_stride*i}]  = dma_addr_req_i[${i}];
+% endif
   % endfor
 
   // Internal + external master requests
@@ -178,9 +197,11 @@ module system_bus
   assign debug_master_resp_o = int_master_resp[core_v_mini_mcu_pkg::DEBUG_MASTER_IDX];
 
   % for i in range(dma.get_num_master_ports()):
-  assign dma_read_resp_o[${i}] = int_master_resp[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+${3*i}];
-  assign dma_write_resp_o[${i}] = int_master_resp[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+${3*i}];
-  assign dma_addr_resp_o[${i}] = int_master_resp[core_v_mini_mcu_pkg::DMA_ADDR_P0_IDX+${3*i}];
+  assign dma_read_resp_o[${i}] = int_master_resp[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+${dma_stride*i}];
+  assign dma_write_resp_o[${i}] = int_master_resp[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+${dma_stride*i}];
+% if not is_mc:
+  assign dma_addr_resp_o[${i}] = int_master_resp[core_v_mini_mcu_pkg::DMA_ADDR_P0_IDX+${dma_stride*i}];
+% endif
   % endfor
   
   // External master responses
@@ -204,9 +225,32 @@ module system_bus
 
   // External slave requests
 % if is_mc:
-  // Route hart 0's demux to external slave ports
-  assign ext_core_instr_req_o = demux_xbar_req[core_v_mini_mcu_pkg::CORE0_INSTR_IDX][DEMUX_XBAR_EXT_SLAVE_IDX];
-  assign ext_core_data_req_o = demux_xbar_req[core_v_mini_mcu_pkg::CORE0_DATA_IDX][DEMUX_XBAR_EXT_SLAVE_IDX];
+% for i in range(nh):
+  assign core_ext_instr_req[${i}] = demux_xbar_req[core_v_mini_mcu_pkg::CORE${i}_INSTR_IDX][DEMUX_XBAR_EXT_SLAVE_IDX];
+  assign core_ext_data_req[${i}] = demux_xbar_req[core_v_mini_mcu_pkg::CORE${i}_DATA_IDX][DEMUX_XBAR_EXT_SLAVE_IDX];
+% endfor
+
+  xbar_varlat_n_to_one #(
+      .XBAR_NMASTER(core_v_mini_mcu_pkg::NUM_HARTS)
+  ) core_ext_instr_arbiter_i (
+      .clk_i,
+      .rst_ni,
+      .master_req_i (core_ext_instr_req),
+      .master_resp_o(core_ext_instr_resp),
+      .slave_req_o  (ext_core_instr_req_o),
+      .slave_resp_i (ext_core_instr_resp_i)
+  );
+
+  xbar_varlat_n_to_one #(
+      .XBAR_NMASTER(core_v_mini_mcu_pkg::NUM_HARTS)
+  ) core_ext_data_arbiter_i (
+      .clk_i,
+      .rst_ni,
+      .master_req_i (core_ext_data_req),
+      .master_resp_o(core_ext_data_resp),
+      .slave_req_o  (ext_core_data_req_o),
+      .slave_resp_i (ext_core_data_resp_i)
+  );
 % else:
   assign ext_core_instr_req_o = demux_xbar_req[CORE_INSTR_IDX][DEMUX_XBAR_EXT_SLAVE_IDX];
   assign ext_core_data_req_o = demux_xbar_req[CORE_DATA_IDX][DEMUX_XBAR_EXT_SLAVE_IDX];
@@ -215,9 +259,11 @@ module system_bus
 
   generate
     for (genvar i = 0; i < core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS; i++) begin : gen_ext_dma_master_req_map
-      assign ext_dma_read_req_o[i] = demux_xbar_req[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+3*i][DEMUX_XBAR_EXT_SLAVE_IDX];
-      assign ext_dma_write_req_o[i] = demux_xbar_req[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+3*i][DEMUX_XBAR_EXT_SLAVE_IDX];
+      assign ext_dma_read_req_o[i] = demux_xbar_req[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM*i][DEMUX_XBAR_EXT_SLAVE_IDX];
+      assign ext_dma_write_req_o[i] = demux_xbar_req[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM*i][DEMUX_XBAR_EXT_SLAVE_IDX];
+% if not is_mc:
       assign ext_dma_addr_req_o[i] = demux_xbar_req[core_v_mini_mcu_pkg::DMA_ADDR_P0_IDX+3*i][DEMUX_XBAR_EXT_SLAVE_IDX];
+% endif
     end
   endgenerate
   
@@ -234,8 +280,10 @@ module system_bus
 
   // External slave responses
 % if is_mc:
-  assign demux_xbar_resp[core_v_mini_mcu_pkg::CORE0_INSTR_IDX][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_core_instr_resp_i;
-  assign demux_xbar_resp[core_v_mini_mcu_pkg::CORE0_DATA_IDX][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_core_data_resp_i;
+% for i in range(nh):
+  assign demux_xbar_resp[core_v_mini_mcu_pkg::CORE${i}_INSTR_IDX][DEMUX_XBAR_EXT_SLAVE_IDX] = core_ext_instr_resp[${i}];
+  assign demux_xbar_resp[core_v_mini_mcu_pkg::CORE${i}_DATA_IDX][DEMUX_XBAR_EXT_SLAVE_IDX] = core_ext_data_resp[${i}];
+% endfor
 % else:
   assign demux_xbar_resp[CORE_INSTR_IDX][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_core_instr_resp_i;
   assign demux_xbar_resp[CORE_DATA_IDX][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_core_data_resp_i;
@@ -244,9 +292,11 @@ module system_bus
 
   generate
     for (genvar i = 0; i < core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS; i++) begin : gen_ext_dma_master_resp_map
-      assign demux_xbar_resp[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+3*i][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_dma_read_resp_i[i];
-      assign demux_xbar_resp[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+3*i][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_dma_write_resp_i[i];
+      assign demux_xbar_resp[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM*i][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_dma_read_resp_i[i];
+      assign demux_xbar_resp[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM*i][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_dma_write_resp_i[i];
+% if not is_mc:
       assign demux_xbar_resp[core_v_mini_mcu_pkg::DMA_ADDR_P0_IDX+3*i][DEMUX_XBAR_EXT_SLAVE_IDX] = ext_dma_addr_resp_i[i];
+% endif
     end
   endgenerate
   

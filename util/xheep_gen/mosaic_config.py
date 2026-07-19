@@ -11,6 +11,7 @@ import yaml
 import sys
 import logging
 import hjson
+import copy
 from pathlib import PurePath
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
@@ -20,6 +21,27 @@ from jsonref import JsonRef
 from xheep import XHeep, BusType, CpuConfig
 from cpu.cpu import CPU
 from memory_ss.memory_ss import MemorySS
+
+try:
+    from .core_registry import (
+        CORE_SPECS,
+        SCI_CORES,
+        resolved_capabilities,
+        VALID_BUS,
+        VALID_TARGETS,
+        expanded_user_peripherals,
+        validate_soc_config,
+    )
+except ImportError:  # mcu_gen adds util/xheep_gen directly to sys.path
+    from core_registry import (
+        CORE_SPECS,
+        SCI_CORES,
+        resolved_capabilities,
+        VALID_BUS,
+        VALID_TARGETS,
+        expanded_user_peripherals,
+        validate_soc_config,
+    )
 
 # ──────────────────────────────────────────────
 # Data classes for the parsed YAML structure
@@ -53,6 +75,25 @@ class SchedulerConfig:
     tdu: bool = False
     mode: str = "static"  # static | dynamic | power-aware
 
+    @property
+    def mode_value(self) -> int:
+        """SystemVerilog ``sched_mode_e`` encoding."""
+
+        return {"static": 0, "dynamic": 1, "power-aware": 2}[self.mode]
+
+
+@dataclass(frozen=True)
+class HartConfig:
+    """Resolved per-hart topology entry consumed by templates and software."""
+
+    hart_id: int
+    group_index: int
+    group_instance: int
+    ip: str
+    isa: str
+    role: str
+    params: Dict[str, Any]
+
 
 @dataclass
 class MosaicConfig:
@@ -60,6 +101,8 @@ class MosaicConfig:
 
     soc_name: str = "mosaic_soc"
     pdk: str = "gf180mcu"
+    profile: str = "soc"
+    target: str = "rtl"
     cpu_groups: List[CpuGroupConfig] = field(default_factory=list)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     bus: str = "obi"
@@ -70,29 +113,31 @@ class MosaicConfig:
     # Derived fields (set during build())
     total_cores: int = 0
     hart_id_map: Dict[str, List[int]] = field(default_factory=dict)  # ip -> [hart_ids]
+    harts: List[HartConfig] = field(default_factory=list)
 
 
 # ──────────────────────────────────────────────
 # Bus fabric options
 # ──────────────────────────────────────────────
 
-VALID_BUS_TYPES = ("obi", "log", "floonoc")
+VALID_BUS_TYPES = tuple(sorted(VALID_BUS))
+VALID_TARGET_TYPES = tuple(sorted(VALID_TARGETS))
 
 # Per-fabric option defaults. Every key a fabric supports must appear here —
 # unknown keys in mosaic.yaml are rejected so typos can't silently no-op.
 DEFAULT_BUS_OPTS: Dict[str, Dict[str, Any]] = {
     "log": {
-        "topology": "lic",  # lic | bfly2 | bfly4
+        "topology": "lic",  # current tcdm backend topology
         "num_banks": "auto",  # auto = next_pow2(number of bus masters)
     },
     "floonoc": {
-        "route_algo": "XY",  # XY | ID (floogen route_algo)
+        "route_algo": "ID",  # compact topology uses one ID-table router
         "endpoints": "compact",  # compact = nh+1 managers / 2 subordinates
     },
 }
 
-VALID_LOG_TOPOLOGIES = ("lic", "bfly2", "bfly4")
-VALID_FLOONOC_ROUTE_ALGOS = ("XY", "ID")
+VALID_LOG_TOPOLOGIES = ("lic",)
+VALID_FLOONOC_ROUTE_ALGOS = ("ID",)
 
 
 def _parse_bus_opts(raw: Any, bus: str) -> Dict[str, Any]:
@@ -166,8 +211,24 @@ def parse_yaml(path: PurePath) -> MosaicConfig:
     with open(path, "r") as f:
         raw = yaml.safe_load(f)
 
-    if not isinstance(raw, dict) or "soc" not in raw:
-        raise RuntimeError("mosaic.yaml must contain a top-level 'soc' key")
+    # Retain the long-standing actionable migration error for the historical
+    # `axi` spelling before applying the shared strict schema.
+    raw_soc = raw.get("soc") if isinstance(raw, dict) else None
+    raw_bus = raw_soc.get("bus") if isinstance(raw_soc, dict) else None
+    if raw_bus == "axi":
+        raise RuntimeError(
+            "mosaic.yaml: bus 'axi' was never a distinct fabric; use 'obi' "
+            "(OBI crossbar), 'log' (logarithmic interconnect), or 'floonoc' "
+            "(FlooNoC AXI NoC)"
+        )
+    if isinstance(raw_bus, str) and raw_bus not in VALID_BUS_TYPES:
+        raise RuntimeError(
+            f"mosaic.yaml: unsupported bus type '{raw_bus}' "
+            f"(valid: {', '.join(VALID_BUS_TYPES)})"
+        )
+    errors = validate_soc_config(raw)
+    if errors:
+        raise RuntimeError("mosaic.yaml:\n  - " + "\n  - ".join(errors))
 
     soc = raw["soc"]
     cfg = MosaicConfig()
@@ -178,6 +239,14 @@ def parse_yaml(path: PurePath) -> MosaicConfig:
     # ── soc.pdk ──
     cfg.pdk = soc.get("pdk", "gf180mcu")
 
+    # ── soc.profile ──
+    cfg.profile = soc.get("profile", "soc")
+
+    # ── soc.target ──
+    # `rtl` preserves the broad generator design space.  `tapeout` is accepted
+    # only after core_registry's strict physical capability matrix passes.
+    cfg.target = soc.get("target", "rtl")
+
     # ── soc.cores ──
     cores_raw = soc.get("cores", [])
     if not cores_raw:
@@ -186,24 +255,10 @@ def parse_yaml(path: PurePath) -> MosaicConfig:
         )
 
     for entry in cores_raw:
-        ip = entry.get("ip", "").strip().lower()
-        if not ip:
-            raise RuntimeError(
-                "mosaic.yaml: each core entry must have a non-empty 'ip' field"
-            )
-
-        isa = entry.get("isa", "rv32i")
+        ip = entry["ip"]
+        isa = entry["isa"]
         count = entry.get("count", 1)
-        if not isinstance(count, int) or count < 1:
-            raise RuntimeError(
-                f"mosaic.yaml: core '{ip}': 'count' must be an integer >= 1"
-            )
-
-        role = entry.get("role", "nano").strip().lower()
-        if role not in ("titan", "atlas", "nano"):
-            raise RuntimeError(
-                f"mosaic.yaml: core '{ip}': 'role' must be one of titan, atlas, nano"
-            )
+        role = entry["role"]
 
         # Collect per-core-type parameters (everything except standard fields)
         standard_keys = {"ip", "isa", "count", "role"}
@@ -219,13 +274,7 @@ def parse_yaml(path: PurePath) -> MosaicConfig:
     cfg.memory.boot_rom_kb = mem_raw.get("boot_rom_kb", 2)
 
     # ── soc.bus ──
-    cfg.bus = soc.get("bus", "obi").strip().lower()
-    if cfg.bus == "axi":
-        raise RuntimeError(
-            "mosaic.yaml: bus 'axi' was never a distinct fabric; use 'obi' "
-            "(OBI crossbar), 'log' (logarithmic interconnect), or 'floonoc' "
-            "(FlooNoC AXI NoC)"
-        )
+    cfg.bus = soc.get("bus", "obi")
     if cfg.bus not in VALID_BUS_TYPES:
         raise RuntimeError(
             f"mosaic.yaml: unsupported bus type '{cfg.bus}' "
@@ -252,9 +301,24 @@ def parse_yaml(path: PurePath) -> MosaicConfig:
 def _build_derived(cfg: MosaicConfig):
     """Assign hart IDs and compute derived quantities."""
     hart_id = 0
-    for group in cfg.cpu_groups:
+    cfg.hart_id_map.clear()
+    cfg.harts.clear()
+    for group_index, group in enumerate(cfg.cpu_groups):
         group.hart_id_base = hart_id
-        cfg.hart_id_map[group.ip] = list(range(hart_id, hart_id + group.count))
+        group_harts = list(range(hart_id, hart_id + group.count))
+        cfg.hart_id_map.setdefault(group.ip, []).extend(group_harts)
+        for group_instance, resolved_hart_id in enumerate(group_harts):
+            cfg.harts.append(
+                HartConfig(
+                    hart_id=resolved_hart_id,
+                    group_index=group_index,
+                    group_instance=group_instance,
+                    ip=group.ip,
+                    isa=group.isa,
+                    role=group.role,
+                    params=copy.deepcopy(group.params),
+                )
+            )
         hart_id += group.count
     cfg.total_cores = hart_id
 
@@ -287,12 +351,6 @@ def load_mosaic_yaml(path: PurePath) -> MosaicConfig:
 
 RESERVED_MASTER_SLOTS = 2  # DEBUG + error slave
 
-# Cores that are integrated via an SCI wrapper (Wishbone/req-gnt → OBI).
-# These use the base CPU class; their per-core parameters are passed to the
-# SCI wrapper directly by the cpu_subsystem template.
-SCI_CORES = {"fazyrv", "serv", "qerv", "ibex", "cva6", "picorv32", "snitch"}
-
-
 def _make_cpu(group: "CpuGroupConfig") -> CPU:
     """Construct the proper CPU subclass for a core group.
 
@@ -307,23 +365,39 @@ def _make_cpu(group: "CpuGroupConfig") -> CPU:
     if ip == "cv32e20":
         from cpu.cv32e20 import cv32e20 as _Cv32e20
 
-        return _Cv32e20(rv32e=p.get("rv32e"), rv32m=p.get("rv32m"))
+        # ISA is the public contract. Derive native core parameters when the
+        # YAML does not provide an implementation choice, rather than building
+        # RV32I hardware for a declared rv32emc software ABI.
+        rv32e = p.get("rv32e", group.isa.startswith("rv32e"))
+        isa_ext = group.isa[4:]
+        rv32m = p.get("rv32m", "RV32MFast" if "m" in isa_ext else "RV32MNone")
+        return _Cv32e20(rv32e=rv32e, rv32m=rv32m)
     if ip == "cv32e40p":
         from cpu.cv32e40p import cv32e40p as _Cv32e40p
 
         return _Cv32e40p(
-            fpu=p.get("fpu"), zfinx=p.get("zfinx"), corev_pulp=p.get("corev_pulp")
+            fpu=p.get("fpu"),
+            fpu_addmul_lat=p.get("fpu_addmul_lat"),
+            fpu_others_lat=p.get("fpu_others_lat"),
+            zfinx=p.get("zfinx"),
+            corev_pulp=p.get("corev_pulp"),
+            num_mhpmcounters=p.get("num_mhpmcounters"),
         )
     if ip == "cv32e40px":
         from cpu.cv32e40px import cv32e40px as _Cv32e40px
 
         return _Cv32e40px(
-            fpu=p.get("fpu"), zfinx=p.get("zfinx"), corev_pulp=p.get("corev_pulp")
+            fpu=p.get("fpu"),
+            fpu_addmul_lat=p.get("fpu_addmul_lat"),
+            fpu_others_lat=p.get("fpu_others_lat"),
+            zfinx=p.get("zfinx"),
+            corev_pulp=p.get("corev_pulp"),
+            num_mhpmcounters=p.get("num_mhpmcounters"),
         )
     if ip == "cv32e40x":
         from cpu.cv32e40x import cv32e40x as _Cv32e40x
 
-        return _Cv32e40x()
+        return _Cv32e40x(num_mhpmcounters=p.get("num_mhpmcounters"))
     # SCI-wrapped cores (fazyrv, serv, qerv, ibex, cva6, ...)
     cpu = CPU(ip)
     for k, v in p.items():
@@ -359,20 +433,17 @@ def mosaic_to_xheep_kwargs(
     """
     import load_config
 
-    # ── 1. Load the base x-heep system from HJSON ──
-    # This builds memory (banks + linker sections), peripheral domains
-    # (base/AO + user), DMA, power manager and the single-core CPU declared
-    # in the HJSON. We then override the CPU topology with the multi-core
-    # groups from mosaic.yaml below.
+    # ── 1. Resolve the base x-heep HJSON from mosaic.yaml ──
+    # The base file supplies register offsets and platform-service defaults;
+    # RAM, boot ROM, and optional user peripherals are rewritten before the
+    # XHeep object is constructed.  This makes mosaic.yaml authoritative for
+    # every bus fabric rather than leaving the general.hjson defaults active.
     base_path = _resolve_repo_path(base_config)
-    system = load_config.load_cfg_file(base_path)
-
-    # Read the raw HJSON to extract the standard template kwargs fields
-    # (debug, ext_slaves, flash_mem, linker_script, interrupts) exactly as
-    # mcu_gen.py does for the standard flow.
     with open(base_path, "r") as file:
         config = hjson.loads(file.read(), use_decimal=True)
         config = JsonRef.replace_refs(config)
+    config = _resolve_base_config(config, cfg)
+    system = load_config.load_cfg_hjson(hjson.dumps(config))
 
     # ── 2. Overlay multi-core CPU topology from mosaic.yaml ──
     cpu_groups = []
@@ -423,8 +494,25 @@ def mosaic_to_xheep_kwargs(
     # ── 5. Register the mosaic config as an extension so templates that
     #        need it (e.g. TDU, multi-core scheduling) can access it. ──
     system.add_extension("mosaic_cfg", cfg)
+    system.add_extension("soc_name", cfg.soc_name)
+    system.add_extension("pdk", cfg.pdk)
+    system.add_extension("soc_profile", cfg.profile)
+    system.add_extension("implementation_target", cfg.target)
     system.add_extension("tdu_enabled", cfg.scheduler.tdu)
     system.add_extension("sched_mode", cfg.scheduler.mode)
+    system.add_extension("sched_mode_value", cfg.scheduler.mode_value)
+    system.add_extension("resolved_harts", tuple(cfg.harts))
+    system.add_extension("hart_id_map", copy.deepcopy(cfg.hart_id_map))
+    debug_hart_mask = 0
+    interrupt_hart_mask = 0
+    for hart in cfg.harts:
+        capabilities = resolved_capabilities(hart.ip, hart.params)
+        if "debug" in capabilities:
+            debug_hart_mask |= 1 << hart.hart_id
+        if "interrupts" in capabilities:
+            interrupt_hart_mask |= 1 << hart.hart_id
+    system.add_extension("debug_hart_mask", debug_hart_mask)
+    system.add_extension("interrupt_hart_mask", interrupt_hart_mask)
     system.add_extension("bus_opts", cfg.bus_opts or _parse_bus_opts({}, cfg.bus))
 
     # ── 6. Build and validate ──
@@ -477,6 +565,42 @@ def mosaic_to_xheep_kwargs(
     }
 
     return kwargs
+
+
+def _resolve_base_config(config: dict, cfg: "MosaicConfig") -> dict:
+    """Apply authoritative mosaic.yaml memory/peripheral choices to HJSON.
+
+    The fixed base HJSON remains useful as an address/register catalog.  It is
+    not allowed to override public mosaic.yaml fields, so this function
+    produces the concrete HJSON consumed by ``load_cfg_hjson``.
+    """
+
+    config = copy.deepcopy(config)
+    sram_kb = cfg.memory.sram_kb
+    # MemorySS supports at most 16 banks and requires power-of-two bank sizes.
+    # Split larger memories into 32 KiB banks; smaller memories use one bank.
+    bank_size_kb = min(32, sram_kb)
+    bank_sizes = [bank_size_kb] * (sram_kb // bank_size_kb)
+    config["ram_banks"] = {"code_and_data": {"sizes": bank_sizes}}
+
+    code_size = min(0xE800, sram_kb * 1024 // 2)
+    config["linker_sections"] = [
+        {"name": "code", "start": 0, "size": code_size},
+        {"name": "data", "start": code_size},
+    ]
+
+    bootrom = config["ao_peripherals"]["bootrom"]
+    bootrom["length"] = f"0x{cfg.memory.boot_rom_kb * 1024:08x}"
+
+    selected = expanded_user_peripherals(
+        cfg.peripherals, multicore=cfg.total_cores > 1
+    )
+    for name, peripheral in config["peripherals"].items():
+        if name in {"address", "length"}:
+            continue
+        peripheral["is_included"] = "yes" if name in selected else "no"
+
+    return config
 
 
 def _override_memory_for_log(system: XHeep, cfg: "MosaicConfig"):

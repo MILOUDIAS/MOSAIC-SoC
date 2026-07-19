@@ -21,7 +21,7 @@ INC=hw/core-v-mini-mcu/include
 CC=hw/vendor/pulp_platform/common_cells
 XCI=hw/vendor/xheep/cluster_interconnect/rtl
 
-TPLS=$(find . \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
+TPLS=$(find . \( -path './build/*' -o -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
     -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
     -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
 
@@ -29,6 +29,12 @@ gen () {  # $1 = mosaic config
   $PY util/xheep_gen/mcu_gen.py --mosaic_config "$1" \
       --base_config configs/general.hjson --pads_cfg configs/pad_cfg.py \
       --outtpl "$TPLS" --externaltpl "" >/dev/null
+  MANIFEST=$($PY util/xheep_gen/build_manifest.py locate --config "$1" \
+      --base-config configs/general.hjson --pads-cfg configs/pad_cfg.py \
+      --repo-root "$REPO")
+  GENERATED_ROOT=$($PY -c \
+      'import json,sys; print(json.load(open(sys.argv[1]))["generated_root"])' \
+      "$MANIFEST")
 }
 
 echo "### [1/4] generating RTL for configs/mosaic_log.yaml ..."
@@ -41,12 +47,12 @@ verilator --binary -j 0 --timing --top-module tb_log_xbar --Mdir "$OBJ" \
   -Wno-fatal -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME \
   -Wno-PINCONNECTEMPTY -Wno-GENUNNAMED -Wno-UNSIGNED -Wno-SYNCASYNCNET \
   -Wno-WIDTHTRUNC -Wno-TIMESCALEMOD \
-  -I$CC/include -I$INC \
+  -I$CC/include -I$GENERATED_ROOT/hw/core-v-mini-mcu/include -I$INC \
   $CC/src/cf_math_pkg.sv \
   $INC/addr_map_rule_pkg.sv \
   $INC/power_manager_pkg.sv \
   $INC/obi_pkg.sv \
-  $INC/core_v_mini_mcu_pkg.sv \
+  $GENERATED_ROOT/hw/core-v-mini-mcu/include/core_v_mini_mcu_pkg.sv \
   $CC/src/addr_decode_dync.sv \
   $CC/src/addr_decode.sv \
   $CC/src/lzc.sv \
@@ -61,7 +67,7 @@ verilator --binary -j 0 --timing --top-module tb_log_xbar --Mdir "$OBJ" \
   $XCI/tcdm_interconnect/bfly_net.sv \
   $XCI/tcdm_interconnect/clos_net.sv \
   hw/core-v-mini-mcu/xbar_varlat_one_to_n.sv \
-  hw/core-v-mini-mcu/system_xbar.sv \
+  $GENERATED_ROOT/hw/core-v-mini-mcu/system_xbar.sv \
   $TB/tb_log_xbar.sv
 
 echo "### [3/4] running simulation ..."

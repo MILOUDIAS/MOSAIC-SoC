@@ -1,0 +1,27 @@
+soc:
+  name: prompted_demo
+  pdk: gf180mcu
+  cores:
+  - ip: cv32e20
+    count: 1
+    role: titan
+    isa: rv32emc
+  - ip: picorv32
+    count: 1
+    role: atlas
+    boot_addr: 4096
+    isa: rv32i
+  - ip: picorv32
+    count: 1
+    role: nano
+    boot_addr: 8192
+    isa: rv32i
+  memory:
+    sram_kb: 64
+    boot_rom_kb: 2
+  bus: obi
+  scheduler:
+    tdu: true
+    mode: dynamic
+  peripherals:
+  - uart

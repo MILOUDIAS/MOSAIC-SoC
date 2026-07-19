@@ -16,6 +16,7 @@
 soc:
   name: mosaic_new_cores
   pdk: gf180mcu
+  profile: testbench
 
   cores:
     - ip: cva6            # TITAN — orchestrator (hart 0)

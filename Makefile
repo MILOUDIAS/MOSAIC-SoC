@@ -70,10 +70,17 @@ PYTHON_X_HEEP_CFG ?=
 # MOSAIC-SoC configuration (single declarative YAML driving the multi-core flow)
 MOSAIC_CFG ?= mosaic.yaml
 BASE_CFG   ?= configs/general.hjson
+MOSAIC_OUTPUT_ROOT ?= build/mosaic
+# Optional executable/command invoked after template rendering and before the
+# FuseSoC overlay is staged. It receives MOSAIC_MANIFEST and
+# MOSAIC_GENERATED_ROOT in its environment and may register generated platform
+# RTL with `build_manifest.py register` (for example, per-hart PLIC reg RTL).
+MOSAIC_PLATFORM_GENERATOR ?=
 
 # MCU-Gen template files to generate
 MCU_GEN_TEMPLATES = $(shell find . \
-  \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' -o \
+  \( -path './build/*' -o \
+     -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' -o \
      -path './util/*' ! -path './util/profile' ! -path './util/profile/*' -o \
      -path './test/*' -o \
      -path './refs/*' \) -prune -o \
@@ -184,18 +191,20 @@ mcu-gen:
 ## @param BASE_CFG=[configs/general.hjson(default),<base-xheep-hjson-for-peripherals>]
 ## @param PADS_CFG=[configs/pad_cfg.py(default),<pad-config>]
 mosaic-gen:
-	$(PYTHON) util/xheep_gen/mcu_gen.py --mosaic_config $(MOSAIC_CFG) --base_config $(BASE_CFG) --pads_cfg $(PADS_CFG) --outtpl "$(MCU_GEN_TEMPLATES)" --externaltpl "$(EXTERNAL_MCU_GEN_TEMPLATES)"
-
-	@echo "### MOSAIC-GEN completed! Running FuseSoC register generators..."
-	# NOTE: use the refs-excluding cores-root helper. A bare `--cores-root .`
-	# makes FuseSoC recurse into refs/ and crash on the 0-byte test fixture
-	# refs/IP_Tools/fusesoc/tests/capi2_cores/misc/empty.core. The helper builds
-	# a temporary cores-root with only the project trees (hw tb util configs sw)
-	# plus the root .core files, then runs the identical `--setup`.
-	bash scripts/fusesoc-setup.sh
-
-	$(MAKE) verible
-	$(MAKE) format-python
+	$(PYTHON) util/xheep_gen/mcu_gen.py --mosaic_config $(MOSAIC_CFG) --base_config $(BASE_CFG) --pads_cfg $(PADS_CFG) --output-root $(MOSAIC_OUTPUT_ROOT) --outtpl "$(MCU_GEN_TEMPLATES)" --externaltpl "$(EXTERNAL_MCU_GEN_TEMPLATES)"
+	@set -e; \
+		manifest="$$($(PYTHON) util/xheep_gen/build_manifest.py locate \
+			--config "$(MOSAIC_CFG)" --base-config "$(BASE_CFG)" \
+			--pads-cfg "$(PADS_CFG)" --repo-root "$(mkfile_path)" \
+			--output-root "$(MOSAIC_OUTPUT_ROOT)")"; \
+		echo "### MOSAIC-GEN completed! Running FuseSoC register generators..."; \
+		if [ -n "$(strip $(MOSAIC_PLATFORM_GENERATOR))" ]; then \
+			MOSAIC_MANIFEST="$$manifest" \
+			MOSAIC_GENERATED_ROOT="$$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["generated_root"])' "$$manifest")" \
+			$(MOSAIC_PLATFORM_GENERATOR); \
+		fi; \
+		bash scripts/fusesoc-setup.sh --manifest "$$manifest"; \
+		echo "### MOSAIC manifest: $$manifest"
 
 ## Display mcu_gen.py help
 mcu-gen-help:

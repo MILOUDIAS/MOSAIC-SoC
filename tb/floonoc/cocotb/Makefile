@@ -28,7 +28,8 @@ VERILOG_SOURCES = \
 # (mcu_gen with configs/mosaic_floonoc.yaml — run.sh stage2 handles it).
 ifeq ($(TOPLEVEL),tb_noc_top)
 FLOO := $(REPO)/hw/vendor/mosaic/floonoc
-FAB  := $(REPO)/hw/ip/floonoc_fabric
+MOSAIC_GENERATED_ROOT ?= $(REPO)/build/mosaic/INVALID-MANIFEST-NOT-SUPPLIED/generated
+FAB  := $(MOSAIC_GENERATED_ROOT)/hw/ip/floonoc_fabric
 VERILOG_SOURCES += \
   $(FLOO)/hw/floo_pkg.sv \
   $(FAB)/floo_mosaic_noc_pkg.sv \

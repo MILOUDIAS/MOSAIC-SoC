@@ -16,7 +16,10 @@ SERV := $(REPO)/hw/vendor/mosaic/serv
 FAZ  := $(REPO)/hw/vendor/mosaic/fazyrv
 SCI  := $(REPO)/hw/sci
 MCU  := $(REPO)/hw/core-v-mini-mcu
+MOSAIC_GENERATED_ROOT ?= $(REPO)/build/mosaic/INVALID-MANIFEST-NOT-SUPPLIED/generated
+GEN_MCU := $(MOSAIC_GENERATED_ROOT)/hw/core-v-mini-mcu
 TB   := $(REPO)/tb/mosaic
+TC   := $(REPO)/hw/vendor/pulp_platform/tech_cells_generic/src/rtl/tc_clk.sv
 
 # Packages first (declaration order matters), then DUT + memories + wrapper.
 VERILOG_SOURCES = \
@@ -24,8 +27,9 @@ VERILOG_SOURCES = \
   $(INC)/reg_pkg.sv \
   $(INC)/fifo_pkg.sv \
   $(INC)/addr_map_rule_pkg.sv \
-  $(INC)/core_v_mini_mcu_pkg.sv \
-  $(MCU)/cpu_subsystem.sv \
+  $(GEN_MCU)/include/core_v_mini_mcu_pkg.sv \
+  $(TC) \
+  $(GEN_MCU)/cpu_subsystem.sv \
   $(TB)/tb_obi_mem.sv \
   $(THIS_DIR)/cocotb_top.sv
 
@@ -38,7 +42,7 @@ COMPILE_ARGS += -Wno-PINMISSING -Wno-CASEINCOMPLETE -Wno-SYMRSVDWORD -Wno-GENUNN
 # FazyRV's bit-serial carry chains (fazyrv_pc/alu) are intentional combinational
 # loops Verilator flags as UNOPTFLAT but evaluates correctly by iterating.
 COMPILE_ARGS += -Wno-UNOPTFLAT
-COMPILE_ARGS += -I$(INC)
+COMPILE_ARGS += -I$(GEN_MCU)/include -I$(INC)
 COMPILE_ARGS += -y $(SERV)/rtl -y $(SERV)/servile -y $(FAZ)/rtl -y $(SCI) -y $(MCU) -y $(INC)
 
 include $(shell cocotb-config --makefiles)/Makefile.sim

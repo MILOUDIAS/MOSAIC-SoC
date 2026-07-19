@@ -21,13 +21,15 @@ module tdu_tb;
   logic [NUM_HARTS-1:0] core_running;
   logic [NUM_HARTS-1:0] core_sleep;
   logic [NUM_HARTS-1:0] core_wake;
+  logic [NUM_HARTS-1:0] core_park;
   logic                 tdu_irq;
 
   int errors = 0;
 
   // ── DUT ─────────────────────────────────────────────────────────
   tdu #(
-      .NUM_HARTS(NUM_HARTS)
+      .NUM_HARTS(NUM_HARTS),
+      .RESET_SCHED_MODE(tdu_pkg::SCHED_DYNAMIC)
   ) dut (
       .clk_i          (clk),
       .rst_ni         (rst_n),
@@ -36,6 +38,7 @@ module tdu_tb;
       .core_running_i (core_running),
       .core_sleep_i   (core_sleep),
       .core_wake_o    (core_wake),
+      .core_park_o    (core_park),
       .tdu_irq_o      (tdu_irq)
   );
 
@@ -98,9 +101,9 @@ module tdu_tb;
     rst_n = 1'b1;
     repeat (2) @(posedge clk);
 
-    // ── 1. Default SCHED_MODE is STATIC (0) ──
+    // ── 1. Configured reset SCHED_MODE is DYNAMIC (1) ──
     bus_read(32'h04, rdata);
-    check(rdata, 32'h0, "default SCHED_MODE");
+    check(rdata, 32'h1, "configured reset SCHED_MODE");
 
     // ── 2. Write SCHED_MODE = DYNAMIC ──
     bus_write(32'h04, 32'h1);
@@ -174,24 +177,35 @@ module tdu_tb;
     @(negedge clk);
     req.valid = 1'b0; req.write = 1'b0; req.wstrb = 4'h0;
 
-    // ── 9. CORE_STATUS: running=0x01 (bit0), sleep=0x02 (bit8 of field) ──
-    // Layout: {sleep[13:7], running[6:0]}. running=1 -> bit0; sleep=2 -> bit8.
+    // ── 9. PARK_REQ produces a targeted one-cycle park pulse ──
+    @(negedge clk);
+    req.valid = 1'b1; req.write = 1'b1; req.addr = 32'h60; req.wdata = 32'h08; req.wstrb = 4'hF;
+    @(posedge clk);
+    @(posedge clk);
+    if (core_park !== 7'b0001000) begin
+      $display("[FAIL] PARK_REQ core 3: got %b", core_park);
+      errors++;
+    end else $display("[PASS] PARK_REQ core 3");
+    @(negedge clk);
+    req.valid = 1'b0; req.write = 1'b0; req.wstrb = 4'h0;
+
+    // ── 10. CORE_STATUS: fixed 16-bit running/sleeping fields ──
     core_running = 7'b0000001;
     core_sleep   = 7'b0000010;
     @(negedge clk);
     bus_read(32'h00, rdata);
-    check(rdata, 32'h0000_0101, "CORE_STATUS");
+    check(rdata, 32'h0002_0001, "CORE_STATUS");
     core_running = '0;
     core_sleep   = '0;
 
-    // ── 10. CPI estimate array ──
+    // ── 11. CPI estimate array ──
     bus_write(32'h20 + 4*2, 32'h0000_0007);  // core 2 CPI = 7
     bus_read(32'h20 + 4*2, rdata);
     check(rdata, 32'h0000_0007, "CPI_EST[2]");
     bus_read(32'h20 + 4*0, rdata);
     check(rdata, 32'h0, "CPI_EST[0] default");
 
-    // ── 11. Energy counter increments with running cores ──
+    // ── 12. Energy counter increments with running cores ──
     bus_write(32'h1C, 32'h0);  // clear
     bus_read(32'h1C, rdata);
     check(rdata, 32'h0, "ENERGY cleared");
@@ -205,7 +219,7 @@ module tdu_tb;
       errors++;
     end else $display("[PASS] ENERGY incremented to 0x%08h", rdata);
 
-    // ── 12. Read-only path: write to CORE_STATUS is ignored ──
+    // ── 13. Read-only path: write to CORE_STATUS is ignored ──
     bus_write(32'h00, 32'hDEAD);
     bus_read(32'h00, rdata);
     check(rdata, 32'h0, "CORE_STATUS RO (write ignored)");
@@ -216,14 +230,15 @@ module tdu_tb;
       $display("\n=== TDU TB: ALL TESTS PASSED ===");
     else
       $display("\n=== TDU TB: %0d FAILURES ===", errors);
-    $finish;
+    if (errors == 0) $finish;
+    else $fatal(1, "TDU TB failed with %0d errors", errors);
   end
 
   // Watchdog
   initial begin
     #(20000ns);
     $display("[FAIL] Watchdog timeout");
-    $finish;
+    $fatal(1, "TDU TB watchdog timeout");
   end
 
 endmodule

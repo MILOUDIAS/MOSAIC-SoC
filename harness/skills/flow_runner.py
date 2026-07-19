@@ -11,12 +11,14 @@ everything.
 """
 
 import re
+import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ..core import (
-    SkillResult, RunReport, REPO_ROOT, run_cmd, load_yaml, log,
+    SkillResult, RunReport, REPO_ROOT, build_subprocess_env, run_cmd,
+    load_yaml, log,
 )
 
 # ── Flow definitions ─────────────────────────────────────────────────
@@ -82,6 +84,57 @@ FLOWS: Dict[str, Dict[str, Any]] = {
         "description": "Build scheduling demo firmware",
         "timeout": 60,
     },
+    # ── full-SoC functional sims (config selected via MOSAIC_CFG env) ──
+    "tb-soc-wake": {
+        "cmd": ["bash", "tb/mosaic_soc/run.sh"],
+        "env_config_key": "MOSAIC_CFG",
+        "require_exit_success": True,  # run.sh exits 0 even on sim failure
+        "description": "Full-SoC TDU wake-and-run demo (EXIT SUCCESS gate)",
+        "timeout": 3600,
+    },
+    "tb-soc-generic": {
+        "cmd": ["bash", "tb/mosaic_soc/run_generic.sh"],
+        "env_config_key": "MOSAIC_CFG",
+        "require_exit_success": True,
+        "description": "Topology-generic all-hart liveness demo (EXIT SUCCESS gate)",
+        "timeout": 3600,
+    },
+    "tb-soc-titan": {
+        "cmd": ["bash", "tb/mosaic_soc/run_titan.sh"],
+        "env_config_key": "MOSAIC_CFG",
+        "require_exit_success": True,
+        "description": "All-TITAN SMP demo (EXIT SUCCESS gate)",
+        "timeout": 3600,
+    },
+    "tb-soc-fw": {
+        "cmd": ["bash", "tb/mosaic_soc/run_fw.sh"],
+        "env_config_key": "MOSAIC_CFG",
+        "require_exit_success": True,
+        "description": "Production C firmware on the full SoC",
+        "timeout": 3600,
+    },
+    # ── unit / fabric TBs ──
+    "tb-tl-obi": {
+        "cmd": ["bash", "tb/tl_obi/run.sh"],
+        "description": "TileLink->OBI bridge unit TB (rocket/boom SCI)",
+        "timeout": 600,
+    },
+    "tb-log-xbar": {
+        "cmd": ["bash", "tb/log_xbar/run.sh"],
+        "description": "Logarithmic-interconnect fabric unit TB",
+        "timeout": 600,
+    },
+    "tb-floonoc": {
+        "cmd": ["bash", "tb/floonoc/cocotb/run.sh"],
+        "description": "FlooNoC bridges + NoC smoke (cocotb)",
+        "timeout": 900,
+    },
+    # ── generator/config pytests ──
+    "pytest": {
+        "cmd": ["python3", "-m", "pytest", "test/test_x_heep_gen", "-q"],
+        "description": "Config-system + harness pytest suites",
+        "timeout": 900,
+    },
 }
 
 
@@ -119,6 +172,19 @@ def _parse_make_output(output: str) -> Dict[str, Any]:
     return metrics
 
 
+def _parse_pytest(output: str) -> Dict[str, Any]:
+    """Extract pass/fail counts from pytest -q output."""
+    result: Dict[str, Any] = {}
+    m = re.search(r"(\d+) passed", output)
+    if m:
+        result["passed"] = int(m.group(1))
+    m = re.search(r"(\d+) failed", output)
+    if m:
+        result["failed"] = int(m.group(1))
+    result["all_pass"] = result.get("failed", 0) == 0 and "passed" in result
+    return result
+
+
 def _parse_cocotb_result(output: str) -> Dict[str, Any]:
     """Extract PASS/FAIL from cocotb output."""
     result: Dict[str, Any] = {}
@@ -128,10 +194,12 @@ def _parse_cocotb_result(output: str) -> Dict[str, Any]:
         result["pass"] = int(m.group(2))
         result["fail"] = int(m.group(3))
         result["all_pass"] = result["fail"] == 0
-    # Check for EXIT SUCCESS
-    if "EXIT SUCCESS" in output:
+    # Check for the sim's EXIT SUCCESS marker. Anchored: run.sh prints
+    # "### RESULT: no EXIT SUCCESS" on failure, which CONTAINS the substring —
+    # a plain `in` check is false-positive on every failed run.
+    if re.search(r"(?m)^(### RESULT: )?EXIT SUCCESS", output):
         result["exit_success"] = True
-    elif "EXIT FAILURE" in output:
+    elif re.search(r"(?m)EXIT FAILURE|no EXIT SUCCESS", output):
         result["exit_success"] = False
     return result
 
@@ -173,6 +241,7 @@ class FlowRunner:
         config: Optional[str] = None,
         extra_args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
+        on_output: Optional[Callable[[str], None]] = None,
     ) -> SkillResult:
         """Run an EDA flow by name.
 
@@ -180,7 +249,8 @@ class FlowRunner:
             flow_name: Name of the flow (key in FLOWS dict).
             config: Optional config path for mosaic-gen-config.
             extra_args: Additional command-line arguments.
-            env: Additional environment variables.
+            env: Additional environment-variable overlays. Model API secrets
+                are removed at the subprocess boundary.
 
         Returns:
             SkillResult with timing, metrics, and parsed log output.
@@ -193,13 +263,40 @@ class FlowRunner:
             )
 
         spec = FLOWS[flow_name]
-        cmd = list(spec["cmd"])
+        if "cmd" in spec:
+            cmd = list(spec["cmd"])
+        else:
+            # cmd_prefix flows (mosaic-gen-config) REQUIRE a config: the last
+            # token is the "MOSAIC_CFG=" argv stub completed below.
+            if not config:
+                return SkillResult(
+                    ok=False, skill="flow-runner",
+                    summary=f"Flow '{flow_name}' requires --config",
+                    errors=["cmd_prefix flow with no config given"],
+                )
+            cmd = list(spec["cmd_prefix"])
 
-        # Handle config override
+        # Handle config override: make-style flows take MOSAIC_CFG=<path> as an
+        # argv token (cmd_prefix pattern); run.sh-style flows take it from the
+        # ENVIRONMENT (env_config_key). Anything else with a config is an error
+        # (the old behavior appended broken "MOSAIC_CFG=", "<path>" argv tokens).
         if config and flow_name == "mosaic-gen-config":
             cmd[-1] = f"MOSAIC_CFG={config}"
+        elif config and spec.get("env_config_key"):
+            env = dict(env) if env else {}
+            env.setdefault(spec["env_config_key"], config)
         elif config:
-            cmd.extend(["MOSAIC_CFG=", config])
+            return SkillResult(
+                ok=False, skill="flow-runner",
+                summary=f"Flow '{flow_name}' does not accept a config override",
+                errors=["Only mosaic-gen-config (argv) and env_config_key flows "
+                        "(MOSAIC_CFG env) take --config"],
+            )
+
+        # Materialize an environment without known/configured model credentials
+        # here so this policy remains visible at the flow boundary. run_cmd
+        # enforces the same rule again for every other tool caller.
+        env = build_subprocess_env(env)
 
         if extra_args:
             cmd.extend(extra_args)
@@ -209,7 +306,10 @@ class FlowRunner:
 
         start = time.monotonic()
         try:
-            proc = run_cmd(cmd, cwd=cwd, timeout=timeout, env=env)
+            run_kwargs = {"cwd": cwd, "timeout": timeout, "env": env}
+            if on_output is not None:
+                run_kwargs["on_output"] = on_output
+            proc = run_cmd(cmd, **run_kwargs)
             elapsed = time.monotonic() - start
         except subprocess.TimeoutExpired:
             elapsed = time.monotonic() - start
@@ -239,6 +339,8 @@ class FlowRunner:
             warnings = parsed["warnings"]
             errors = parsed["errors"]
             metrics.update(parsed)
+        elif flow_name == "pytest":
+            metrics.update(_parse_pytest(combined_output))
         elif "tb-" in flow_name or "harden" in flow_name:
             metrics.update(_parse_cocotb_result(combined_output))
 
@@ -256,6 +358,14 @@ class FlowRunner:
         self.reports.append(report)
 
         ok = proc.returncode == 0
+        # tb/mosaic_soc runners exit 0 even when the sim fails — the real gate
+        # is the parsed EXIT SUCCESS marker (and cocotb all_pass where present).
+        if spec.get("require_exit_success"):
+            ok = ok and metrics.get("exit_success") is True
+        elif "exit_success" in metrics:
+            ok = ok and bool(metrics["exit_success"])
+        if "all_pass" in metrics:
+            ok = ok and bool(metrics["all_pass"])
         summary_parts = [f"Flow '{flow_name}' {'PASS' if ok else 'FAIL'}"]
         summary_parts.append(f"({elapsed:.1f}s, exit={proc.returncode})")
         if metrics.get("all_pass"):

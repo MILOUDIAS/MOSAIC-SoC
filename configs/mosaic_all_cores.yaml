@@ -10,12 +10,15 @@
 # the GF180MCU 1.249 mm² tapeout budget (~80 kGE + caches).
 # picorv32 and snitch (2026-07 additions) are exercised by their own
 # bring-up configs (mosaic_picorv32.yaml / mosaic_snitch.yaml).
+# rocket and boom (RV64 chipyard tiles, 2026-07) are likewise SIM-ONLY and
+# absent here — see mosaic_rocket.yaml / mosaic_boom.yaml / mosaic_berkeley.yaml.
 #
 # Run:  make mosaic-gen MOSAIC_CFG=configs/mosaic_all_cores.yaml
 
 soc:
   name: mosaic_all_cores
   pdk: gf180mcu
+  profile: testbench       # build-closure acceptance, not one firmware image
 
   cores:
     - ip: cv32e20          # native CVE2 — TITAN orchestrator

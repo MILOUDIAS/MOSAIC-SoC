@@ -93,6 +93,13 @@ uint32_t tdu_get_wake_mask(void);
 void tdu_wake_harts(uint32_t hart_mask);
 
 /**
+ * Re-park completed harts so a later TDU wake restarts their worker image.
+ * Workers normally call this only for their own hart bit after committing all
+ * result and completion stores.
+ */
+void tdu_park_harts(uint32_t hart_mask);
+
+/**
  * Read core status (running + sleeping bitmasks).
  *
  * @return Current core status.
@@ -101,6 +108,11 @@ tdu_core_status_t tdu_get_core_status(void);
 
 /**
  * Push a task descriptor into the 8-deep FIFO.
+ *
+ * This status-then-write convenience API is for the single TITAN orchestrator
+ * required by production AMP profiles. It is not a multi-producer SMP lock;
+ * multiple TITANs must serialize producers in software or use a dedicated
+ * atomic mailbox protocol.
  *
  * @param task Task descriptor to enqueue.
  * @return 0 on success, -1 if queue is full.

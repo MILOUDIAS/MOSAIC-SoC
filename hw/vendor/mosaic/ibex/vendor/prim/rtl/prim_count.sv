@@ -307,7 +307,10 @@ module prim_count
   // is used in design without adding this assertion check.
   logic unused_assert_connected;
 
-  `ASSERT_INIT_NET(AssertConnected_A, unused_assert_connected === 1'b1 || !EnableAlertTriggerSVA)
+  // x-heep's older prim_assert does not have ASSERT_INIT_NET; this property
+  // only samples the connectivity sentinel at time zero, so ASSERT_INIT is
+  // equivalent for the MOSAIC simulation/synthesis closure.
+  `ASSERT_INIT(AssertConnected_A, unused_assert_connected === 1'b1 || !EnableAlertTriggerSVA)
 `endif
 
 endmodule // prim_count

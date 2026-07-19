@@ -14,6 +14,11 @@
 //   - an energy accumulator (active cores x cycles proxy)
 //   - a scheduling-mode register (static / dynamic / power-aware)
 //
+// Placement policy intentionally runs on TITAN: the TDU records the selected
+// mode and supplies CPI/energy telemetry, while every descriptor carries the
+// final concrete hart chosen by software.  The hardware never silently
+// rewrites core_hint.
+//
 // The module exposes a register-interface slave (reg_req_t/reg_rsp_t) so it
 // drops into the always-on (AO) peripheral reg bus alongside the other x-heep
 // peripherals. The register decode is hand-coded (no regtool dependency).
@@ -21,7 +26,8 @@
 `include "common_cells/assertions.svh"
 
 module tdu #(
-    parameter int unsigned NUM_HARTS = 7
+    parameter int unsigned NUM_HARTS = 7,
+    parameter tdu_pkg::sched_mode_e RESET_SCHED_MODE = tdu_pkg::SCHED_STATIC
 ) (
     input  logic clk_i,
     input  logic rst_ni,
@@ -36,6 +42,11 @@ module tdu #(
 
     // Per-core wake pulses (1-cycle, edge-triggered to each core's irq/wake)
     output logic [NUM_HARTS-1:0] core_wake_o,
+
+    // Per-core park pulses.  Software writes PARK_REQ after a worker has
+    // committed its completion/result stores.  The cpu subsystem clears the
+    // corresponding run latch so the worker can be dispatched repeatedly.
+    output logic [NUM_HARTS-1:0] core_park_o,
 
     // Event interrupt to the TITAN core (asserted on task enqueue)
     output logic                 tdu_irq_o
@@ -115,7 +126,9 @@ module tdu #(
 
     if (req_valid) begin
       ready_d = 1'b1;
-      if (cpi_region) begin
+      if (req_write && reg_req_i.wstrb != 4'hF) begin
+        error_d = 1'b1;
+      end else if (cpi_region) begin
         // Per-core CPI estimate array (RW)
         if (req_write) begin
           if (cpi_idx < CpiWordsW) begin
@@ -135,7 +148,12 @@ module tdu #(
         unique case (req_addr)
           TDU_CORE_STATUS_OFFSET: begin
             if (req_write) error_d = 1'b1;  // RO
-            else rdata_d = {{(32-2*NUM_HARTS){1'b0}}, core_sleep_i, core_running_i};
+            // Stable software ABI: running in [15:0], sleeping in [31:16],
+            // independent of the generated hart count.
+            else begin
+              rdata_d[NUM_HARTS-1:0] = core_running_i;
+              rdata_d[16 +: NUM_HARTS] = core_sleep_i;
+            end
           end
 
           TDU_SCHED_MODE_OFFSET: begin
@@ -162,6 +180,13 @@ module tdu #(
             if (req_write) begin
               // handled in wake pulse logic below via wake_req_pulse
             end
+            rdata_d = 32'h0;
+          end
+
+          TDU_PARK_REQ_OFFSET: begin
+            // Write-1-to-set a one-cycle park pulse on selected cores.
+            // Reads return zero.  The pulse is generated below from the
+            // accepted request, just like WAKE_REQ.
             rdata_d = 32'h0;
           end
 
@@ -246,7 +271,7 @@ module tdu #(
   // ── Register updates ────────────────────────────────────────────
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      sched_mode_q     <= SCHED_STATIC;
+      sched_mode_q     <= RESET_SCHED_MODE;
       wake_mask_q      <= '0;
       energy_counter_q <= '0;
     end else begin
@@ -290,10 +315,14 @@ module tdu #(
   // own push, so worker pops can never outrun pushes.
   logic [NUM_HARTS-1:0] wake_req_pulse;
   logic [NUM_HARTS-1:0] wake_task_pulse;
+  logic [NUM_HARTS-1:0] park_req_pulse;
   logic [NUM_HARTS-1:0] hint_onehot;
 
   assign wake_req_pulse  = (req_valid && req_write &&
                            (req_addr == TDU_WAKE_REQ_OFFSET))
+                           ? req_wdata[NUM_HARTS-1:0] : '0;
+  assign park_req_pulse  = (req_valid && req_write &&
+                           (req_addr == TDU_PARK_REQ_OFFSET))
                            ? req_wdata[NUM_HARTS-1:0] : '0;
 
   assign hint_onehot     = NUM_HARTS'(1) << push_data.core_hint;
@@ -301,10 +330,13 @@ module tdu #(
                                   : '0;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (!rst_ni)
+    if (!rst_ni) begin
       core_wake_o <= '0;
-    else
+      core_park_o <= '0;
+    end else begin
       core_wake_o <= wake_req_pulse | wake_task_pulse;
+      core_park_o <= park_req_pulse;
+    end
   end
 
   // ── Event interrupt to TITAN ────────────────────────────────────
@@ -321,5 +353,6 @@ module tdu #(
   // ── Assertions ──────────────────────────────────────────────────
   `ASSERT_INIT(NumHartsPositive, NUM_HARTS >= 1)
   `ASSERT_INIT(NumHartsFitStatus, NUM_HARTS <= 16)
+  `ASSERT_INIT(ResetSchedModeValid, RESET_SCHED_MODE <= SCHED_POWER_AWARE)
 
 endmodule : tdu

@@ -21,6 +21,7 @@
   memory_ss = xheep.memory_ss()
   is_mc = xheep.is_multi_core()
   nh = xheep.num_harts()
+  tdu_enabled = is_mc and bool(xheep.get_extension("tdu_enabled"))
 %>
 
 package core_v_mini_mcu_pkg;
@@ -63,12 +64,16 @@ package core_v_mini_mcu_pkg;
   localparam logic [31:0] CORE${i}_INSTR_IDX = 32'd${2*i};
   localparam logic [31:0] CORE${i}_DATA_IDX = 32'd${2*i+1};
 % endfor
+  // The pin-level testbench exposes one arbitrated external I/D pair. Keep
+  // its historical scalar names as aliases for that pair, not extra masters.
+  localparam logic [31:0] CORE_INSTR_IDX = CORE0_INSTR_IDX;
+  localparam logic [31:0] CORE_DATA_IDX = CORE0_DATA_IDX;
   localparam logic [31:0] DEBUG_MASTER_IDX = 32'd${2*nh};
   localparam logic [31:0] DMA_READ_P0_IDX = 32'd${2*nh+1};
   localparam logic [31:0] DMA_WRITE_P0_IDX = 32'd${2*nh+2};
-  localparam logic [31:0] DMA_ADDR_P0_IDX = 32'd${2*nh+3};
+  localparam int unsigned DMA_OBI_PORTS_PER_STREAM = 2;
 
-  localparam SYSTEM_XBAR_NMASTER = ${2*nh + 1 + int(dma.get_num_master_ports())*3};
+  localparam SYSTEM_XBAR_NMASTER = ${2*nh + 1 + int(dma.get_num_master_ports())*2};
 % else:
   localparam logic [31:0] CORE_INSTR_IDX = 0;
   localparam logic [31:0] CORE_DATA_IDX = 1;
@@ -76,6 +81,7 @@ package core_v_mini_mcu_pkg;
   localparam logic [31:0] DMA_READ_P0_IDX = 3;
   localparam logic [31:0] DMA_WRITE_P0_IDX = 4;
   localparam logic [31:0] DMA_ADDR_P0_IDX = 5;
+  localparam int unsigned DMA_OBI_PORTS_PER_STREAM = 3;
 
   localparam SYSTEM_XBAR_NMASTER = ${3 + int(dma.get_num_master_ports())*3};
 % endif
@@ -124,23 +130,20 @@ package core_v_mini_mcu_pkg;
   localparam logic[31:0] AO_PERIPHERAL_IDX = 32'd${memory_ss.ram_numbanks() + 2};
 
 % if is_mc:
+  // Per-hart CLINT-compatible software interrupt, mtimecmp and mtime window.
+  localparam logic[31:0] CLINT_START_ADDRESS = AO_PERIPHERAL_START_ADDRESS + 32'h000B0000;
+  localparam logic[31:0] CLINT_SIZE          = 32'h00010000;
+  localparam logic[31:0] CLINT_END_ADDRESS   = CLINT_START_ADDRESS + CLINT_SIZE;
+% endif
+
+% if tdu_enabled:
   // ── MOSAIC Task Dispatch Unit (TDU) ─────────────────────────────
   // Memory-mapped inside the AO peripheral domain at a fixed offset
   // (after gpio_ao). The TDU sits on the AO reg bus and is instantiated
-  // only in multi-core configurations. See hw/tdu/rtl/tdu.sv.
+  // only when scheduler.tdu is enabled. See hw/tdu/rtl/tdu.sv.
   localparam logic[31:0] TDU_START_ADDRESS = AO_PERIPHERAL_START_ADDRESS + 32'h000A0000;
   localparam logic[31:0] TDU_SIZE          = 32'h00001000;  // 4 KB window
   localparam logic[31:0] TDU_END_ADDRESS   = TDU_START_ADDRESS + TDU_SIZE;
-
-  // ── PLIC multi-target ───────────────────────────────────────────
-  // In the PoC, the TITAN core (hart 0) is the single PLIC target.
-  // It runs FreeRTOS and dispatches work to ATLAS/NANO worker cores
-  // via the TDU. Worker cores receive only timer interrupts. This is
-  // architecturally correct for Big.LITTLE: the orchestrator handles
-  // all external events and delegates via the TDU wake mechanism.
-  // Future enhancement: parameterize NumTarget to route specific
-  // interrupt sources directly to worker cores.
-  localparam int unsigned PLIC_NUM_TARGET = 1;
 
 % endif
   localparam logic[31:0] PERIPHERAL_START_ADDRESS = 32'h${hex(user_peripheral_domain.get_start_address())[2:]};

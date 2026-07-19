@@ -21,14 +21,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from ..core import SkillResult, validate_config, REPO_ROOT
+from util.xheep_gen.core_registry import (
+    IDMA_OBI_PORTS_PER_STREAM,
+    STANDARD_DMA_MASTER_PORTS,
+)
 
 try:
     import hjson
 except ImportError:  # pragma: no cover
     hjson = None
-
-DMA_MASTER_PORTS_DEFAULT = 2  # configs/general.hjson dma.num_master_ports
-
 
 # ── Config digestion ─────────────────────────────────────────────────
 
@@ -78,8 +79,10 @@ def _digest(soc: Dict[str, Any]) -> Dict[str, Any]:
     nh = len(harts)
     bus = str(soc.get("bus", "obi")).strip().lower()
     sram_kb = int(soc.get("memory", {}).get("sram_kb", 32))
-    dma_ports = DMA_MASTER_PORTS_DEFAULT
-    n_masters = 2 * max(1, nh) + 1 + 3 * dma_ports
+    dma_ports = STANDARD_DMA_MASTER_PORTS
+    n_masters = (
+        2 * max(1, nh) + 1 + IDMA_OBI_PORTS_PER_STREAM * dma_ports
+    )
     opts = soc.get("bus_opts", {}) or {}
     nb = opts.get("log", {}).get("num_banks", "auto")
     if bus == "log":
@@ -167,7 +170,7 @@ def _build_columns(d: Dict[str, Any]) -> Tuple[List[Dict], List[Tuple]]:
         masters.append({"label": f"hart {h}: {hart['ip']}",
                         "sub": f"{hart['role']} (I+D)", "kind": "master"})
     masters.append({"label": "debug", "sub": "DM master", "kind": "master"})
-    masters.append({"label": "iDMA", "sub": f"{d['dma_ports']}x3 ports", "kind": "master"})
+    masters.append({"label": "iDMA", "sub": f"{d['dma_ports']}x2 read/write", "kind": "master"})
 
     slaves = [{"label": f"SRAM x{d['num_banks']}",
                "sub": f"{d['sram_kb']} KB total", "kind": "mem"}]

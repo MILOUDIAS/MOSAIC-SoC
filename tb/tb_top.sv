@@ -24,6 +24,7 @@ module tb_top #(
   // clock and reset for tb
   logic      clk = 'b1;
   logic      rst_n = 'b0;
+  logic      verilator_preload_done = 'b0;
   // wire for inout connections
   wire clk_w, rst_n_w;
 
@@ -113,6 +114,28 @@ module tb_top #(
 
     testharness_i.load_flash_hex(firmware);
 
+`ifdef VERILATOR
+    // The Verilator build writes SRAM through the direct hierarchical path in
+    // tb_loadHEX(), so preload it while reset is still asserted.  Cores whose
+    // reset vector points straight at SRAM (for example Rocket/BOOM TITANs)
+    // otherwise fetch uninitialized words before the historical post-reset
+    // loader runs.  Other simulators retain the debug-master loading path
+    // below because their tb_loadHEX() implementation needs a running clock.
+    if (JTAG_DPI == 0 && boot_sel == 0) begin
+      // SRAM reset initialization runs at each active edge.  Wait until the
+      // reset sequence's final active edge, then load on the following inactive
+      // edge so reset initialization cannot overwrite the firmware.
+      repeat (RESET_WAIT_CYCLES) begin
+        @(posedge clk);
+      end
+      @(negedge clk);
+      testharness_i.tb_loadHEX(firmware);
+      if ($test$plusargs("verbose"))
+        $display("[TESTBENCH] %t: SRAM preloaded", $time);
+    end
+    verilator_preload_done = 1'b1;
+`endif
+
     wait (rst_n == 1'b1);
 
     // wait a few cycles
@@ -121,9 +144,12 @@ module tb_top #(
     end
 
     if (JTAG_DPI == 0 && boot_sel == 0) begin
+`ifndef VERILATOR
       testharness_i.tb_loadHEX(firmware);
+`endif
       #CLK_PHASE_HI testharness_i.tb_set_exit_loop();
-      #CLK_PHASE_LO if ($test$plusargs("verbose")) $display("[TESTBENCH] %t: memory loaded", $time);
+      #CLK_PHASE_LO if ($test$plusargs("verbose"))
+        $display("[TESTBENCH] %t: boot exit loop armed", $time);
     end else begin
       if ($test$plusargs("verbose")) $display("[TESTBENCH] %t: waiting for GDB...", $time);
     end
@@ -146,6 +172,11 @@ module tb_top #(
     repeat (RESET_WAIT_CYCLES) begin
       @(posedge clk);
     end
+
+`ifdef VERILATOR
+    // Coordinate with the direct SRAM preload above before any core can fetch.
+    wait (verilator_preload_done == 1'b1);
+`endif
 
     // start running
     #RESET_DEL rst_n = 1'b1;
@@ -177,9 +208,12 @@ module tb_top #(
   // check if we succeded
   always_ff @(posedge clk, negedge rst_n) begin
     if (exit_valid) begin
-      if (exit_value == 0) $display("EXIT SUCCESS");
-      else $display("EXIT FAILURE: %d", exit_value);
-      $finish;
+      if (exit_value == 0) begin
+        $display("EXIT SUCCESS");
+        $finish;
+      end else begin
+        $fatal(1, "EXIT FAILURE: %d", exit_value);
+      end
     end
   end
 

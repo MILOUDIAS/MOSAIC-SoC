@@ -19,10 +19,30 @@ run_verif_rtl_log.txt
 # reg-generator cache files
 *_reg_gen.cache
 
+# Simulation build artifacts (Verilator / cocotb) — anywhere in the tree.
+# The Verilator precompiled headers alone exceed GitHub's 100 MB file limit.
+obj_dir*/
+obj_diag*/
+sim_build/
+obj_O0/
+obj_bisect/
+results.xml
+
+# Local-only reference IPs and agent tool state — never commit
+refs/
+.commandcode/
+
 # Automatically generated hw files
 tb/tb_util.svh
 tb/testharness.sv
 tb/testharness_pkg.sv
+tb/mosaic_soc/tb_util.svh
+tb/mosaic_soc/obj_dir
+tb/mosaic_soc/obj_diag
+
+
+hw/ip/floonoc_fabric/floo_mosaic_noc_pkg.sv
+hw/ip/floonoc_fabric/floo_mosaic_noc.sv
 
 hw/core-v-mini-mcu/include/core_v_mini_mcu_pkg.sv
 hw/core-v-mini-mcu/core_v_mini_mcu.sv
@@ -103,3 +123,7 @@ flow/OpenROAD-flow-scripts
 .continue
 private/
 .DS_Store
+
+# CVA6 behavioral tracer output (written per sim run)
+trace_hart_*.dasm
+*.egg-info/

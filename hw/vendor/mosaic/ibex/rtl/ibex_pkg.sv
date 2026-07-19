@@ -8,6 +8,11 @@
  */
 package ibex_pkg;
 
+  // The x-heep OpenTitan snapshot predates inverse-SECDED zero-word
+  // constants.  Keep the one Ibex needs in its own namespace so Ibex does not
+  // have to redefine the shared prim_secded_pkg.
+  parameter logic [38:0] IbexSecdedInv3932ZeroWord = 39'h2A00000000;
+
   ////////////////
   // IO Structs //
   ////////////////

@@ -4,6 +4,7 @@
 
 <%
   user_peripheral_domain = xheep.get_user_peripheral_domain()
+  is_mc = xheep.is_multi_core()
 %>
 <%!
     from pads.pin import Input, Output, Inout, PinDigital, Asignal
@@ -49,8 +50,10 @@ module x_heep_system
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_read_resp_i,
     output obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_write_req_o,
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_write_resp_i,
+% if not is_mc:
     output obi_req_t  [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_addr_req_o,
     input  obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] ext_dma_addr_resp_i,
+% endif
 
     output fifo_req_t [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] hw_fifo_req_o,
     input fifo_resp_t [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] hw_fifo_resp_i,
@@ -197,8 +200,10 @@ module x_heep_system
     .ext_dma_read_resp_i,
     .ext_dma_write_req_o,
     .ext_dma_write_resp_i,
+% if not is_mc:
     .ext_dma_addr_req_o,
     .ext_dma_addr_resp_i,
+% endif
     .hw_fifo_done_i,
     .ext_dma_stop_i,
     .hw_fifo_req_o,

@@ -85,9 +85,16 @@ module ext_bus #(
     for (
         genvar i = 0; i < core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS; i++
     ) begin : gen_dma_master_req_map
-      assign master_req[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+i*3]  = heep_dma_read_req_i[i];
-      assign master_req[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+i*3] = heep_dma_write_req_i[i];
-      assign master_req[core_v_mini_mcu_pkg::DMA_ADDR_P0_IDX+i*3]  = heep_dma_addr_req_i[i];
+      assign master_req[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+
+                        i*core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM] =
+          heep_dma_read_req_i[i];
+      assign master_req[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+
+                        i*core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM] =
+          heep_dma_write_req_i[i];
+      if (core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM == 3) begin : gen_legacy_addr_req
+        assign master_req[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+2+i*3] =
+            heep_dma_addr_req_i[i];
+      end
     end
   endgenerate
 
@@ -106,9 +113,18 @@ module ext_bus #(
     for (
         genvar i = 0; i < core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS; i++
     ) begin : gen_dma_master_resp_map
-      assign heep_dma_read_resp_o[i]  = master_resp[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+i];
-      assign heep_dma_write_resp_o[i] = master_resp[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+i];
-      assign heep_dma_addr_resp_o[i]  = master_resp[core_v_mini_mcu_pkg::DMA_ADDR_P0_IDX+i];
+      assign heep_dma_read_resp_o[i] =
+          master_resp[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+
+                      i*core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM];
+      assign heep_dma_write_resp_o[i] =
+          master_resp[core_v_mini_mcu_pkg::DMA_WRITE_P0_IDX+
+                      i*core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM];
+      if (core_v_mini_mcu_pkg::DMA_OBI_PORTS_PER_STREAM == 3) begin : gen_legacy_addr_resp
+        assign heep_dma_addr_resp_o[i] =
+            master_resp[core_v_mini_mcu_pkg::DMA_READ_P0_IDX+2+i*3];
+      end else begin : gen_no_addr_resp
+        assign heep_dma_addr_resp_o[i] = '0;
+      end
     end
   endgenerate
 

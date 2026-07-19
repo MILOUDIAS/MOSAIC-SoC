@@ -161,6 +161,12 @@ module testharness #(
   obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] heep_dma_write_resp;
   obi_req_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] heep_dma_addr_req;
   obi_resp_t [core_v_mini_mcu_pkg::DMA_NUM_MASTER_PORTS-1:0] heep_dma_addr_resp;
+% if is_mc:
+  // The testbench bus retains the legacy address-master pins for scalar
+  // x-heep compatibility. Explicit MOSAIC/iDMA topologies have no such
+  // master, so keep that compatibility-only request inactive.
+  assign heep_dma_addr_req = '0;
+% endif
   obi_req_t [EXT_XBAR_NSLAVE-1:0] ext_slave_req;
   obi_resp_t [EXT_XBAR_NSLAVE-1:0] ext_slave_resp;
   reg_req_t periph_slave_req;
@@ -360,8 +366,10 @@ module testharness #(
       .ext_dma_read_resp_i(heep_dma_read_resp),
       .ext_dma_write_req_o(heep_dma_write_req),
       .ext_dma_write_resp_i(heep_dma_write_resp),
+% if not is_mc:
       .ext_dma_addr_req_o(heep_dma_addr_req),
       .ext_dma_addr_resp_i(heep_dma_addr_resp),
+% endif
       .hw_fifo_req_o(hw_fifo_req),
       .hw_fifo_resp_i(hw_fifo_resp),
       .ext_ao_peripheral_req_i(ext_ao_peripheral_req),

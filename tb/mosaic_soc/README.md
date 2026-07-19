@@ -9,6 +9,24 @@ program on TITAN through the real bus fabric, memory, and boot ROM.
 tb/mosaic_soc/run.sh          # build + run the full-SoC sim (tb_top top)
 ```
 
+## Topology-generic all-hart gate
+
+`run_generic.sh` consumes the generated boot manifest and builds one liveness
+image per boot slot. It initializes the shared control range, requires the exact
+`sentinel[hart] == hart + 1` value for every configured hart, then exits through
+the real `soc_ctrl` path.
+
+```bash
+MOSAIC_CFG=configs/mosaic_sim.yaml tb/mosaic_soc/run_generic.sh
+MOSAIC_CFG=configs/mosaic_rocket_titan.yaml tb/mosaic_soc/run_generic.sh
+MOSAIC_CFG=configs/mosaic_boom_titan.yaml tb/mosaic_soc/run_generic.sh
+```
+
+Worker-only configs are still `profile: testbench`: only hart 0 is released at
+POR to perform targeted TDU dispatch. Production AMP configs continue to require
+one leading TITAN. Rocket/BOOM use uncached translated control windows and remain
+simulation-only.
+
 ## TDU wake-and-run demo (configs/mosaic_wake_demo.yaml) — PASSING ✅
 
 `run.sh` targets a 3-core demo (1 cv32e20 TITAN + 1 fazyrv ATLAS + 1 serv NANO, each

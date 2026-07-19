@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 
 <%!
+  from software_gen import DEFAULT_BOOT_ADDRESS, shared_control_base
+
   # Helper: build SV param list for a CPU instantiation
   def _cv32e20_params(cpu, xif):
       p = []
@@ -67,6 +69,47 @@
       if cpu.is_defined("num_mhpmcounters"):
           p.append(f".NUM_MHPMCOUNTERS({cpu.get_sv_str('num_mhpmcounters')})")
       return p
+
+  # Every core rendered by the explicit topology path must have an explicit
+  # branch below.  Keeping this list next to the renderer makes a registry
+  # addition fail generation until its actual integration is supplied; the
+  # matrix test checks that this set stays equal to CPU.AVAILABLE_CPUS.
+  TOPOLOGY_RENDERERS = frozenset({
+      "boom", "cv32e20", "cv32e40p", "cv32e40px", "cv32e40x", "cva6",
+      "fazyrv", "hazard3", "ibex", "picorv32", "qerv", "rocket", "serv",
+      "snitch",
+  })
+  LEGACY_SCALAR_RENDERERS = frozenset({
+      "cv32e20", "cv32e40p", "cv32e40px", "cv32e40x",
+  })
+
+  def _boot_addr_value(params):
+      """Return the numeric reset address (module BOOT_ADDR defaults to 0x180)."""
+      value = params.get("boot_addr", 0x180)
+      if isinstance(value, bool):
+          raise ValueError("boot_addr must be a 32-bit address, not a boolean")
+      try:
+          address = int(value, 0) if isinstance(value, str) else int(value)
+      except (TypeError, ValueError) as exc:
+          raise ValueError(f"invalid boot_addr {value!r}") from exc
+      if address < 0 or address > 0xffffffff:
+          raise ValueError(f"boot_addr {value!r} is outside the 32-bit address space")
+      return address
+
+  def _sv_boot_addr(params, default_address=None):
+      """Return a 32-bit SV expression for a group's optional boot address.
+
+      TITANs without an override enter the platform BOOT_ADDR (normally the
+      boot ROM).  Reset-held workers instead enter the generated SRAM image
+      default directly; this matches software_gen._boot_address and avoids
+      requiring tiny SCI cores to implement the boot-ROM execution contract.
+      """
+      if "boot_addr" not in params:
+          if default_address is None:
+              return "BOOT_ADDR"
+          return f"32'h{default_address:08x}"
+      address = _boot_addr_value(params)
+      return f"32'h{address:08x}"
 %>
 
 <%
@@ -75,6 +118,30 @@
   is_mc = xheep.is_multi_core()
   cpus = xheep.cpus()
   nh = xheep.num_harts()
+  # A worker-only topology otherwise has no running hart capable of issuing
+  # the first TDU dispatch.  Release hart 0 only for an explicit testbench
+  # profile; production ``soc`` profiles still require a TITAN controller.
+  testbench_hart0_bootstrap = (
+      is_mc
+      and xheep.get_extension("soc_profile") == "testbench"
+      and not any(group.role == "titan" for group in cpus)
+  )
+  tl_sentinel_dest = shared_control_base(
+      _boot_addr_value(group.params) for group in cpus
+  ) if cpus else 0x3000
+  if is_mc:
+      if not cpus or nh < 1:
+          raise ValueError("the topology renderer requires at least one CPU group")
+      unsupported = sorted({group.name for group in cpus} - TOPOLOGY_RENDERERS)
+      if unsupported:
+          raise ValueError(
+              "no cpu_subsystem topology renderer for: " + ", ".join(unsupported)
+          )
+  elif cpu.name not in LEGACY_SCALAR_RENDERERS:
+      raise ValueError(
+          f"core {cpu.name!r} requires an explicit CpuConfig topology; "
+          "set_cpus() must be used instead of the legacy scalar set_cpu() path"
+      )
 %>
 
 % if is_mc:
@@ -113,6 +180,9 @@ module cpu_subsystem
     // Interrupt inputs (one per hart)
     input  logic [31:0] irq_i [NUM_HARTS-1:0],
 
+    // CLINT mtime for cores that expose architectural time/timeh CSRs.
+    input  logic [63:0] time_i,
+
     // Debug Interface (one bit per hart).
     // PACKED [NUM_HARTS-1:0] (not an unpacked array): the SoC carries these
     // 1-bit-per-hart control signals packed (the TDU drives core_wake/core_sleep
@@ -127,6 +197,10 @@ module cpu_subsystem
     // Wake request (one bit per hart) — from the TDU / TITAN orchestrator.
     // Releases a worker core from its dormant (power-gated) reset state.
     input  logic [NUM_HARTS-1:0] core_wake_i,
+
+    // Park request (one bit per hart). Workers return to their reset-held
+    // dormant state after completing a task; TITAN harts ignore this input.
+    input  logic [NUM_HARTS-1:0] core_park_i,
 
     // sleep (one bit per hart)
     output logic [NUM_HARTS-1:0] core_sleep_o
@@ -151,21 +225,59 @@ module cpu_subsystem
     // ═══════════════════════════════════════════════════════════════
 
     localparam int HART_${g_idx}_${inst} = ${group.hart_id_base + inst};
+    localparam logic [31:0] BOOT_ADDR_${g_idx}_${inst} = ${_sv_boot_addr(group.params, DEFAULT_BOOT_ADDRESS if group.role != "titan" else None)};
     logic fetch_enable_${g_idx}_${inst};
+    logic hart_clock_enable_${g_idx}_${inst};
+    logic hart_clk_${g_idx}_${inst};
+      % if group.role == "titan" or (testbench_hart0_bootstrap and group.hart_id_base + inst == 0):
       % if group.role == "titan":
     // TITAN orchestrator boots immediately out of reset.
-    assign fetch_enable_${g_idx}_${inst} = 1'b1;
       % else:
-    // Worker core (${group.role}): held dormant out of reset and released by a
-    // TDU/orchestrator wake pulse on core_wake_i — this closes the
-    // TDU.core_wake_o -> fetch_enable loop. Latch: once woken, stays running.
+    // Explicit worker-only testbench bootstrap: hart 0 boots immediately so
+    // generic liveness firmware can dispatch the remaining harts via the TDU.
+    // This policy is never enabled for a production ``soc`` profile.
+      % endif
+    assign fetch_enable_${g_idx}_${inst} = 1'b1;
+    assign hart_clock_enable_${g_idx}_${inst} = 1'b1;
+      % else:
+    // Worker core (${group.role}): held dormant out of reset, released by a
+    // wake pulse, and returned to the dormant state by a park pulse. Wake has
+    // priority if both controls arrive together, so a newly dispatched task
+    // cannot be lost to a stale completion/park event.
     logic core_run_${g_idx}_${inst};
+    logic reset_clock_hold_${g_idx}_${inst};
     always_ff @(posedge clk_i or negedge rst_ni) begin
-      if (!rst_ni) core_run_${g_idx}_${inst} <= 1'b0;
-      else if (core_wake_i[HART_${g_idx}_${inst}]) core_run_${g_idx}_${inst} <= 1'b1;
+      if (!rst_ni) begin
+        core_run_${g_idx}_${inst} <= 1'b0;
+        // Keep one reset-active core clock edge after POR is released.
+        reset_clock_hold_${g_idx}_${inst} <= 1'b1;
+      end else begin
+        // Preserve the previous run state for one cycle. On park this keeps
+        // the gate open for one edge with the core reset asserted, which is
+        // required by cores such as FazyRV that implement synchronous reset.
+        reset_clock_hold_${g_idx}_${inst} <= core_run_${g_idx}_${inst};
+        if (core_wake_i[HART_${g_idx}_${inst}] ||
+            debug_req_i[HART_${g_idx}_${inst}])
+          core_run_${g_idx}_${inst} <= 1'b1;
+        else if (core_park_i[HART_${g_idx}_${inst}])
+          core_run_${g_idx}_${inst} <= 1'b0;
+      end
     end
     assign fetch_enable_${g_idx}_${inst} = core_run_${g_idx}_${inst};
+    assign hart_clock_enable_${g_idx}_${inst} =
+        core_run_${g_idx}_${inst} | reset_clock_hold_${g_idx}_${inst} | ~rst_ni;
       % endif
+
+    // One physical clock-enable boundary per generated hart.  The run latch
+    // itself remains on the always-on clock so TDU/debug wake requests can
+    // restart a parked worker; the core clock is quiet while that worker is
+    // reset-held.  TITAN harts keep the gate permanently open.
+    tc_clk_gating hart_clock_gate_${g_idx}_${inst} (
+        .clk_i     (clk_i),
+        .en_i      (hart_clock_enable_${g_idx}_${inst}),
+        .test_en_i (1'b0),
+        .clk_o     (hart_clk_${g_idx}_${inst})
+    );
 
       % if group.name == "cv32e20":
 
@@ -182,13 +294,15 @@ module cpu_subsystem
     cve2_xif_wrapper #(
 ${",\n".join(cv32e20_params)}
     ) cpu_${g_idx}_${inst} (
-        .clk_i (clk_i),
-        .rst_ni(rst_ni),
+        .clk_i (hart_clk_${g_idx}_${inst}),
+        // Workers are reset-held while parked so every wake restarts at the
+        // configured boot image; TITAN fetch_enable is constant one.
+        .rst_ni(rst_ni & fetch_enable_${g_idx}_${inst}),
 
         .test_en_i(1'b0),
 
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
-        .boot_addr_i(BOOT_ADDR),
+        .boot_addr_i(BOOT_ADDR_${g_idx}_${inst}),
         .dm_exception_addr_i(32'h0),
         .dm_halt_addr_i(DM_HALTADDRESS),
 
@@ -224,8 +338,20 @@ ${",\n".join(cv32e20_params)}
         .xif_result_if    (xif_${g_idx}_${inst}),
 
         .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
-        .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}])
+        .core_sleep_o(core_sleep[HART_${g_idx}_${inst}])
     );
+
+    // A parked worker is architecturally dormant even when this native core's
+    // sleep output only reports WFI.  Expose the generator-level fetch gate to
+    // the TDU status path as well as the core's own sleep indication.
+    assign core_sleep_o[HART_${g_idx}_${inst}] =
+        ~fetch_enable_${g_idx}_${inst} | core_sleep[HART_${g_idx}_${inst}];
+
+    // The native core exposes only read-side instruction signals.  OBI still
+    // requires every request field to be driven deterministically.
+    assign core_instr_req_o[HART_${g_idx}_${inst}].wdata = '0;
+    assign core_instr_req_o[HART_${g_idx}_${inst}].we    = 1'b0;
+    assign core_instr_req_o[HART_${g_idx}_${inst}].be    = 4'b1111;
 
       % elif group.name == "cv32e40x":
 
@@ -242,11 +368,11 @@ ${",\n".join(cv32e20_params)}
     cv32e40x_core #(
 ${",\n".join(cv32e40x_params)}
     ) cpu_${g_idx}_${inst} (
-        .clk_i(clk_i),
-        .rst_ni(rst_ni),
+        .clk_i(hart_clk_${g_idx}_${inst}),
+        .rst_ni(rst_ni & fetch_enable_${g_idx}_${inst}),
         .scan_cg_en_i(1'b0),
 
-        .boot_addr_i(BOOT_ADDR),
+        .boot_addr_i(BOOT_ADDR_${g_idx}_${inst}),
         .dm_exception_addr_i(32'h0),
         .dm_halt_addr_i(DM_HALTADDRESS),
         .mhartid_i(hart_id_i[HART_${g_idx}_${inst}]),
@@ -280,7 +406,7 @@ ${",\n".join(cv32e40x_params)}
 
         .mcycle_o(),
 
-        .time_i(64'h0),
+        .time_i(time_i),
 
         // CORE-V-XIF (interface present; no coprocessor attached)
         .xif_compressed_if(xif_${g_idx}_${inst}),
@@ -311,8 +437,17 @@ ${",\n".join(cv32e40x_params)}
         .debug_pc_o       (),
 
         .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
-        .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}])
+        .core_sleep_o(core_sleep[HART_${g_idx}_${inst}])
     );
+
+    assign core_sleep_o[HART_${g_idx}_${inst}] =
+        ~fetch_enable_${g_idx}_${inst} | core_sleep[HART_${g_idx}_${inst}];
+
+    // The native core exposes only read-side instruction signals.  OBI still
+    // requires every request field to be driven deterministically.
+    assign core_instr_req_o[HART_${g_idx}_${inst}].wdata = '0;
+    assign core_instr_req_o[HART_${g_idx}_${inst}].we    = 1'b0;
+    assign core_instr_req_o[HART_${g_idx}_${inst}].be    = 4'b1111;
 
       % elif group.name == "cv32e40px":
 
@@ -330,13 +465,13 @@ ${",\n".join(cv32e40x_params)}
     cv32e40px_xif_wrapper #(
 ${",\n".join(cv32e40px_params)}
     ) cpu_${g_idx}_${inst} (
-        .clk_i (clk_i),
-        .rst_ni(rst_ni),
+        .clk_i (hart_clk_${g_idx}_${inst}),
+        .rst_ni(rst_ni & fetch_enable_${g_idx}_${inst}),
 
         .pulp_clock_en_i(1'b1),
         .scan_cg_en_i   (1'b0),
 
-        .boot_addr_i        (BOOT_ADDR),
+        .boot_addr_i        (BOOT_ADDR_${g_idx}_${inst}),
         .mtvec_addr_i       (32'h0),
         .dm_halt_addr_i     (DM_HALTADDRESS),
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
@@ -375,8 +510,77 @@ ${",\n".join(cv32e40px_params)}
         .debug_halted_o   (),
 
         .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
-        .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}])
+        .core_sleep_o(core_sleep[HART_${g_idx}_${inst}])
     );
+
+    assign core_sleep_o[HART_${g_idx}_${inst}] =
+        ~fetch_enable_${g_idx}_${inst} | core_sleep[HART_${g_idx}_${inst}];
+
+    // The native core exposes only read-side instruction signals.  OBI still
+    // requires every request field to be driven deterministically.
+    assign core_instr_req_o[HART_${g_idx}_${inst}].wdata = '0;
+    assign core_instr_req_o[HART_${g_idx}_${inst}].we    = 1'b0;
+    assign core_instr_req_o[HART_${g_idx}_${inst}].be    = 4'b1111;
+
+      % elif group.name == "cv32e40p":
+
+    <%
+    cv32e40p_params = _cv32e40p_params(group.cpu, xif)
+    %>
+
+    // Native CV32E40P.  This is an explicit topology branch: registered
+    // cores never fall through to a guessed implementation.
+    cv32e40p_top #(
+${",\n".join(cv32e40p_params)}
+    ) cpu_${g_idx}_${inst} (
+        .clk_i (hart_clk_${g_idx}_${inst}),
+        .rst_ni(rst_ni & fetch_enable_${g_idx}_${inst}),
+
+        .pulp_clock_en_i(1'b1),
+        .scan_cg_en_i   (1'b0),
+
+        .boot_addr_i        (BOOT_ADDR_${g_idx}_${inst}),
+        .mtvec_addr_i       (32'h0),
+        .dm_halt_addr_i     (DM_HALTADDRESS),
+        .hart_id_i          (hart_id_i[HART_${g_idx}_${inst}]),
+        .dm_exception_addr_i(32'h0),
+
+        .instr_addr_o  (core_instr_req_o[HART_${g_idx}_${inst}].addr),
+        .instr_req_o   (core_instr_req_o[HART_${g_idx}_${inst}].req),
+        .instr_rdata_i (core_instr_resp_i[HART_${g_idx}_${inst}].rdata),
+        .instr_gnt_i   (core_instr_resp_i[HART_${g_idx}_${inst}].gnt),
+        .instr_rvalid_i(core_instr_resp_i[HART_${g_idx}_${inst}].rvalid),
+
+        .data_addr_o  (core_data_req_o[HART_${g_idx}_${inst}].addr),
+        .data_wdata_o (core_data_req_o[HART_${g_idx}_${inst}].wdata),
+        .data_we_o    (core_data_req_o[HART_${g_idx}_${inst}].we),
+        .data_req_o   (core_data_req_o[HART_${g_idx}_${inst}].req),
+        .data_be_o    (core_data_req_o[HART_${g_idx}_${inst}].be),
+        .data_rdata_i (core_data_resp_i[HART_${g_idx}_${inst}].rdata),
+        .data_gnt_i   (core_data_resp_i[HART_${g_idx}_${inst}].gnt),
+        .data_rvalid_i(core_data_resp_i[HART_${g_idx}_${inst}].rvalid),
+
+        .irq_i    (irq_i[HART_${g_idx}_${inst}]),
+        .irq_ack_o(),
+        .irq_id_o (),
+
+        .debug_req_i      (debug_req_i[HART_${g_idx}_${inst}]),
+        .debug_havereset_o(),
+        .debug_running_o  (),
+        .debug_halted_o   (),
+
+        .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
+        .core_sleep_o(core_sleep[HART_${g_idx}_${inst}])
+    );
+
+    assign core_sleep_o[HART_${g_idx}_${inst}] =
+        ~fetch_enable_${g_idx}_${inst} | core_sleep[HART_${g_idx}_${inst}];
+
+    // The native core exposes only read-side instruction signals.  OBI still
+    // requires every request field to be driven deterministically.
+    assign core_instr_req_o[HART_${g_idx}_${inst}].wdata = '0;
+    assign core_instr_req_o[HART_${g_idx}_${inst}].we    = 1'b0;
+    assign core_instr_req_o[HART_${g_idx}_${inst}].be    = 4'b1111;
 
       % elif group.name == "fazyrv":
 
@@ -393,13 +597,13 @@ ${",\n".join(cv32e40px_params)}
         ## Per-core reset/boot address from the mosaic config (default 0x180).
         ## Lets each woken worker run its own program; int(str(..),0) accepts a
         ## YAML int (0x1000 -> 4096) or a quoted hex string.
-        .BOOTADR(32'h${'%08x' % int(str(group.params.get('boot_addr', 0x180)), 0)})
+        .BOOTADR(BOOT_ADDR_${g_idx}_${inst})
     ) cpu_${g_idx}_${inst} (
-        .clk_i(clk_i),
+        .clk_i(hart_clk_${g_idx}_${inst}),
         .rst_ni(rst_ni),
 
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
-        .boot_addr_i(BOOT_ADDR),
+        .boot_addr_i(BOOT_ADDR_${g_idx}_${inst}),
         .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
         .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}]),
 
@@ -425,9 +629,9 @@ ${",\n".join(cv32e40px_params)}
         .PRE_REGISTER(${group.params.get('pre_register', 0)}),
         ## Per-core reset address from the mosaic config (default 0x180) — lets a
         ## woken worker run its own program (int(str(..),0) accepts int or hex str).
-        .RESET_PC(32'h${'%08x' % int(str(group.params.get('boot_addr', 0x180)), 0)})
+        .RESET_PC(BOOT_ADDR_${g_idx}_${inst})
     ) cpu_${g_idx}_${inst} (
-        .clk_i(clk_i),
+        .clk_i(hart_clk_${g_idx}_${inst}),
         .rst_ni(rst_ni),
 
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
@@ -458,9 +662,9 @@ ${",\n".join(cv32e40px_params)}
         .ENABLE_DIV(${group.params.get('div', 0)}),
         ## Per-core reset address from the mosaic config (default 0x180) — lets a
         ## woken worker run its own program (int(str(..),0) accepts int or hex str).
-        .PROGADDR_RESET(32'h${'%08x' % int(str(group.params.get('boot_addr', 0x180)), 0)})
+        .PROGADDR_RESET(BOOT_ADDR_${g_idx}_${inst})
     ) cpu_${g_idx}_${inst} (
-        .clk_i(clk_i),
+        .clk_i(hart_clk_${g_idx}_${inst}),
         .rst_ni(rst_ni),
 
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
@@ -486,9 +690,9 @@ ${",\n".join(cv32e40px_params)}
     // unified OBI port (data channel). EXCLUDED from the GF180 tapeout.
     cva6_sci #(
         ## Per-core reset address from the mosaic config (default 0x180).
-        .BOOT_ADDR(32'h${'%08x' % int(str(group.params.get('boot_addr', 0x180)), 0)})
+        .BOOT_ADDR(BOOT_ADDR_${g_idx}_${inst})
     ) cpu_${g_idx}_${inst} (
-        .clk_i(clk_i),
+        .clk_i(hart_clk_${g_idx}_${inst}),
         .rst_ni(rst_ni),
 
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
@@ -506,6 +710,69 @@ ${",\n".join(cv32e40px_params)}
     // Instruction channel: tied off (CVA6 uses the unified bridge port)
     assign core_instr_req_o[HART_${g_idx}_${inst}] = '0;
 
+      % elif group.name == "rocket":
+
+    // ─── Rocket (RV64, SIM-ONLY) via SCI wrapper (TileLink-C → OBI) ──
+    // Extracted RocketTile (chipyard 1.14.0, MosaicRocketBoomConfig). The
+    // wrapper folds the TileLink→OBI bridge with window translation: code
+    // fetched through the tile's cacheable DRAM window (0x8000_0000|addr),
+    // sentinels/TDU through uncached device windows (CLINT/PLIC ranges), so
+    // shared data is coherent by construction. EXCLUDED from GF180 tapeout.
+    rocket_sci #(
+        ## Per-core reset address from the mosaic config (default 0x180). The
+        ## wrapper aliases it into the tile's DRAM window (0x8000_0000|addr).
+        .BOOT_ADDR(BOOT_ADDR_${g_idx}_${inst}),
+        .CODE_WINDOW_SIZE({32'b0, MEM_SIZE}),
+        .SENTINEL_DEST(32'h${f'{tl_sentinel_dest:08x}'})
+    ) cpu_${g_idx}_${inst} (
+        .clk_i(hart_clk_${g_idx}_${inst}),
+        .rst_ni(rst_ni),
+
+        .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
+        .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
+        .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}]),
+
+        .irq_i(irq_i[HART_${g_idx}_${inst}]),
+        .debug_req_i(debug_req_i[HART_${g_idx}_${inst}]),
+
+        // Unified OBI port → data channel (all core traffic via the bridge)
+        .mem_req_o(core_data_req_o[HART_${g_idx}_${inst}]),
+        .mem_resp_i(core_data_resp_i[HART_${g_idx}_${inst}])
+    );
+
+    // Instruction channel: tied off (Rocket uses the unified bridge port)
+    assign core_instr_req_o[HART_${g_idx}_${inst}] = '0;
+
+      % elif group.name == "boom":
+
+    // ─── BOOM v3 (RV64 OoO, SIM-ONLY) via SCI wrapper (TileLink-C → OBI) ──
+    // Extracted SmallBoomV3 BoomTile (chipyard 1.14.0, MosaicRocketBoomConfig);
+    // same TileLink→OBI window bridge as rocket_sci. EXCLUDED from tapeout.
+    boom_sci #(
+        ## Per-core reset address from the mosaic config (default 0x180). The
+        ## wrapper aliases it into the tile's DRAM window (0x8000_0000|addr).
+        .BOOT_ADDR(BOOT_ADDR_${g_idx}_${inst}),
+        .CODE_WINDOW_SIZE({32'b0, MEM_SIZE}),
+        .SENTINEL_DEST(32'h${f'{tl_sentinel_dest:08x}'})
+    ) cpu_${g_idx}_${inst} (
+        .clk_i(hart_clk_${g_idx}_${inst}),
+        .rst_ni(rst_ni),
+
+        .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
+        .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
+        .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}]),
+
+        .irq_i(irq_i[HART_${g_idx}_${inst}]),
+        .debug_req_i(debug_req_i[HART_${g_idx}_${inst}]),
+
+        // Unified OBI port → data channel (all core traffic via the bridge)
+        .mem_req_o(core_data_req_o[HART_${g_idx}_${inst}]),
+        .mem_resp_i(core_data_resp_i[HART_${g_idx}_${inst}])
+    );
+
+    // Instruction channel: tied off (BOOM uses the unified bridge port)
+    assign core_instr_req_o[HART_${g_idx}_${inst}] = '0;
+
       % elif group.name == "snitch":
 
     // ─── Snitch via SCI wrapper (instr refill + TCDM reqrsp → split OBI) ──
@@ -515,11 +782,11 @@ ${",\n".join(cv32e40px_params)}
     snitch_sci #(
         ## Per-core reset address from the mosaic config (default 0x180) — lets a
         ## woken worker run its own program (int(str(..),0) accepts int or hex str).
-        .BOOT_ADDR(32'h${'%08x' % int(str(group.params.get('boot_addr', 0x180)), 0)}),
+        .BOOT_ADDR(BOOT_ADDR_${g_idx}_${inst}),
         .RVE(${group.params.get('rve', 0)}),
         .RVM(${group.params.get('rvm', 0)})
     ) cpu_${g_idx}_${inst} (
-        .clk_i(clk_i),
+        .clk_i(hart_clk_${g_idx}_${inst}),
         .rst_ni(rst_ni),
 
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
@@ -550,9 +817,9 @@ ${",\n".join(cv32e40px_params)}
         .PRE_REGISTER(${group.params.get('pre_register', 0)}),
         ## Per-core reset address from the mosaic config (default 0x180) — lets a
         ## woken worker run its own program (int(str(..),0) accepts int or hex str).
-        .RESET_PC(32'h${'%08x' % int(str(group.params.get('boot_addr', 0x180)), 0)})
+        .RESET_PC(BOOT_ADDR_${g_idx}_${inst})
     ) cpu_${g_idx}_${inst} (
-        .clk_i(clk_i),
+        .clk_i(hart_clk_${g_idx}_${inst}),
         .rst_ni(rst_ni),
 
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
@@ -576,14 +843,16 @@ ${",\n".join(cv32e40px_params)}
     // Ibex has independent instruction and data ports (like cv32e20), so
     // both OBI master channels are driven — no tie-off.
     ibex_sci #(
-        .RV32E(${1 if group.params.get('rv32e', False) else 0}),
+        .RV32E(${1 if group.params.get('rv32e', group.isa.startswith('rv32e')) else 0}),
+        .RV32M(ibex_pkg::${'RV32MFast' if 'm' in group.isa[4:] else 'RV32MNone'}),
+        .RV32ZC(ibex_pkg::RV32Zca),
         .MHPMCounterNum(${group.params.get('mhpmcounters', 0)})
     ) cpu_${g_idx}_${inst} (
-        .clk_i(clk_i),
+        .clk_i(hart_clk_${g_idx}_${inst}),
         .rst_ni(rst_ni),
 
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
-        .boot_addr_i(BOOT_ADDR),
+        .boot_addr_i(BOOT_ADDR_${g_idx}_${inst}),
         .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
         .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}]),
 
@@ -596,56 +865,41 @@ ${",\n".join(cv32e40px_params)}
         .data_resp_i(core_data_resp_i[HART_${g_idx}_${inst}])
     );
 
-      % else:
+## wrapper-smith:begin hazard3 (family ahb_split; clone of the snitch branch — review port wiring)
+      % elif group.name == "hazard3":
 
-      // Unknown core type '${group.name}' — compile error
-      // To add a new core: write an SCI wrapper + add a branch above
-      // Unsupported error: instantiate a dummy that will fail lint
-      // to alert the user
-      // TODO: Add SCI for ${group.name}
-
-    cv32e40p_top #(
-${",\n".join(cv32e40p_params)}
+    // ─── Hazard3 via SCI wrapper (2-port AHB-Lite → split OBI) ──
+    // RP2350's RV32IMC core (Wren6991/Hazard3 @ 8af99293, Apache-2.0).
+    // hazard3_sci folds the per-port AHB→OBI converters (HREADY-stall,
+    // HSIZE→byte enables); tapeout-eligible.
+    hazard3_sci #(
+        ## Per-core reset address from the mosaic config (default 0x180) — lets a
+        ## woken worker run its own program (int(str(..),0) accepts int or hex str).
+        .BOOT_ADDR(BOOT_ADDR_${g_idx}_${inst})
     ) cpu_${g_idx}_${inst} (
-        .clk_i (clk_i),
+        .clk_i(hart_clk_${g_idx}_${inst}),
         .rst_ni(rst_ni),
 
-        .pulp_clock_en_i(1'b1),
-        .scan_cg_en_i   (1'b0),
-
-        .boot_addr_i        (BOOT_ADDR),
-        .mtvec_addr_i       (32'h0),
-        .dm_halt_addr_i     (DM_HALTADDRESS),
         .hart_id_i(hart_id_i[HART_${g_idx}_${inst}]),
-        .dm_exception_addr_i(32'h0),
-
-        .instr_addr_o  (core_instr_req_o[HART_${g_idx}_${inst}].addr),
-        .instr_req_o   (core_instr_req_o[HART_${g_idx}_${inst}].req),
-        .instr_rdata_i (core_instr_resp_i[HART_${g_idx}_${inst}].rdata),
-        .instr_gnt_i   (core_instr_resp_i[HART_${g_idx}_${inst}].gnt),
-        .instr_rvalid_i(core_instr_resp_i[HART_${g_idx}_${inst}].rvalid),
-
-        .data_addr_o  (core_data_req_o[HART_${g_idx}_${inst}].addr),
-        .data_wdata_o (core_data_req_o[HART_${g_idx}_${inst}].wdata),
-        .data_we_o    (core_data_req_o[HART_${g_idx}_${inst}].we),
-        .data_req_o   (core_data_req_o[HART_${g_idx}_${inst}].req),
-        .data_be_o    (core_data_req_o[HART_${g_idx}_${inst}].be),
-        .data_rdata_i (core_data_resp_i[HART_${g_idx}_${inst}].rdata),
-        .data_gnt_i   (core_data_resp_i[HART_${g_idx}_${inst}].gnt),
-        .data_rvalid_i(core_data_resp_i[HART_${g_idx}_${inst}].rvalid),
-
-        .irq_i    (irq_i[HART_${g_idx}_${inst}]),
-        .irq_ack_o(),
-        .irq_id_o (),
-
-        .debug_req_i      (debug_req_i[HART_${g_idx}_${inst}]),
-        .debug_havereset_o(),
-        .debug_running_o  (),
-        .debug_halted_o   (),
-
         .fetch_enable_i(fetch_enable_${g_idx}_${inst}),
-        .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}])
+        .core_sleep_o(core_sleep_o[HART_${g_idx}_${inst}]),
+
+        .irq_i(irq_i[HART_${g_idx}_${inst}]),
+        .debug_req_i(debug_req_i[HART_${g_idx}_${inst}]),
+
+        .instr_req_o(core_instr_req_o[HART_${g_idx}_${inst}]),
+        .instr_resp_i(core_instr_resp_i[HART_${g_idx}_${inst}]),
+        .data_req_o(core_data_req_o[HART_${g_idx}_${inst}]),
+        .data_resp_i(core_data_resp_i[HART_${g_idx}_${inst}])
     );
+
+## wrapper-smith:end hazard3
+## wrapper-smith:insert-here (do not remove — new core branches are inserted
+## above this anchor by `python -m harness wrapper-smith scaffold`)
+      % else:
+    <%
+    raise ValueError(f"no cpu_subsystem topology renderer for: {group.name}")
+    %>
 
       % endif
 
@@ -922,7 +1176,7 @@ ${",\n".join(cv32e40px_params)}
 
     );
 
-% else:
+% elif cpu.name == "cv32e40p":
 
 <%
 cv32e40p_params = _cv32e40p_params(cpu, xif)
@@ -970,6 +1224,11 @@ ${",\n".join(cv32e40p_params)}
         .fetch_enable_i(fetch_enable),
         .core_sleep_o
     );
+
+% else:
+<%
+raise ValueError(f"no legacy cpu_subsystem scalar renderer for: {cpu.name}")
+%>
 
 % endif
 

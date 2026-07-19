@@ -101,6 +101,7 @@ class DocGen:
             f"# Config Summary: {name}",
             "",
             f"- **PDK:** {soc.get('pdk', 'gf180mcu')}",
+            f"- **Implementation target:** {soc.get('target', 'rtl')}",
             f"- **Total cores:** {total_cores}",
             f"- **SRAM:** {mem.get('sram_kb', 32)} KB",
             f"- **Boot ROM:** {mem.get('boot_rom_kb', 2)} KB",

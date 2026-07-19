@@ -16,6 +16,7 @@
 soc:
   name: mosaic_titan_log
   pdk: gf180mcu
+  profile: testbench       # shared hand-written assembly spans mixed ABIs
 
   cores:
     - ip: cv32e20         # harts 0-1 — hart 0 is the SMP orchestrator
@@ -36,10 +37,10 @@ soc:
   bus_opts:
     log:
       topology: lic
-      # 15 SoC masters (2*4 harts + debug + 3*2 DMA) would auto-bank to 16,
+      # 13 SoC masters (2*4 harts + debug + 2*2 iDMA) would auto-bank to 16,
       # but the x-heep TESTHARNESS adds EXT_XBAR_NMASTER=8 external masters
       # to the same crossbar, and the LIC requires banks >= total masters
-      # (15+8=23) -> 32 banks x 1 KB.
+      # (13+8=21) -> 32 banks x 1 KB.
       num_banks: 32
 
   scheduler:

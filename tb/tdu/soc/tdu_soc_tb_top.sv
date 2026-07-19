@@ -13,7 +13,8 @@
 //   1 = subtract TDU_START_ADDRESS so the TDU sees its register offsets
 
 module tdu_soc_tb_top #(
-    parameter bit TAP_SUBTRACT_BASE = 1'b1
+    parameter bit TAP_SUBTRACT_BASE = 1'b1,
+    parameter int unsigned NUM_HARTS = 7
 ) (
     input  logic                                      clk_i,
     input  logic                                      rst_ni,
@@ -25,11 +26,15 @@ module tdu_soc_tb_top #(
     output logic                                      reg_ready_o,
     output logic [                              31:0] reg_rdata_o,
     // per-hart core status injection + observation
-    input  logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] core_sleep_i,
-    output logic [core_v_mini_mcu_pkg::NUM_HARTS-1:0] core_wake_o,
+    input  logic [NUM_HARTS-1:0] core_sleep_i,
+    output logic [NUM_HARTS-1:0] core_wake_o,
+    output logic [NUM_HARTS-1:0] core_park_o,
     output logic                                      tdu_irq_o
 );
-  import core_v_mini_mcu_pkg::*;
+  // Keep this integration test independent of whichever configuration last
+  // rendered core_v_mini_mcu_pkg.sv into the source tree.
+  localparam logic [31:0] TDU_START_ADDRESS = 32'h200A_0000;
+  localparam logic [31:0] TDU_END_ADDRESS   = TDU_START_ADDRESS + 32'h1000;
 
   reg_pkg::reg_req_t soc_req;
   reg_pkg::reg_rsp_t soc_rsp;
@@ -73,6 +78,7 @@ module tdu_soc_tb_top #(
       .core_running_i(core_running),
       .core_sleep_i  (core_sleep_i),
       .core_wake_o   (core_wake_o),
+      .core_park_o   (core_park_o),
       .tdu_irq_o     (tdu_irq_o)
   );
 endmodule

@@ -3,12 +3,13 @@
 # Same serial-core subset as mosaic_sim.yaml but with the two-tier LOG fabric:
 # a fixed-latency tcdm_interconnect (LIC) over word-interleaved SRAM banks plus
 # the variable-latency crossbar for the non-memory tier. 3 harts + debug +
-# 2 DMA master ports = 13 bus masters, so the generator auto-banks the 32 KB
+# 2 iDMA streams x 2 OBI ports = 11 bus masters, so the generator auto-banks the 32 KB
 # SRAM as 16 interleaved banks x 2 KB (banks >= masters, power of two).
 
 soc:
   name: mosaic_log
   pdk: gf180mcu
+  profile: testbench       # worker-only: hart 0 is a testbench bootstrap, never a production policy
 
   cores:
     - ip: serv             # bit-serial, unified-OBI SCI wrapper (W=1)
@@ -34,7 +35,7 @@ soc:
   bus: log               # two-tier: LIC over banked SRAM + varlat periph tier
   bus_opts:
     log:
-      topology: lic      # lic | bfly2 | bfly4
+      topology: lic      # current tcdm backend topology
       num_banks: auto    # auto = next_pow2(bus masters) -> 16 here
 
   scheduler:

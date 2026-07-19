@@ -14,7 +14,7 @@ REPO="$(cd "$HERE/../../.." && pwd)"
 cd "$REPO"
 PY="${PYTHON:-python3}"
 
-TPLS=$(find . \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
+TPLS=$(find . \( -path './build/*' -o -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
     -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
     -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
 
@@ -22,6 +22,12 @@ gen () {  # $1 = mosaic config
   $PY util/xheep_gen/mcu_gen.py --mosaic_config "$1" \
       --base_config configs/general.hjson --pads_cfg configs/pad_cfg.py \
       --outtpl "$TPLS" --externaltpl "" >/dev/null
+  MANIFEST=$($PY util/xheep_gen/build_manifest.py locate --config "$1" \
+      --base-config configs/general.hjson --pads-cfg configs/pad_cfg.py \
+      --repo-root "$REPO")
+  GENERATED_ROOT=$($PY -c \
+      'import json,sys; print(json.load(open(sys.argv[1]))["generated_root"])' \
+      "$MANIFEST")
 }
 
 echo "### [1/3] generating RTL for configs/mosaic_sim.yaml ..."
@@ -29,7 +35,7 @@ gen configs/mosaic_sim.yaml
 
 echo "### [2/3] running cocotb (SIM=verilator) ..."
 set +e
-make -C "$HERE" SIM=verilator
+make -C "$HERE" SIM=verilator MOSAIC_GENERATED_ROOT="$GENERATED_ROOT"
 RC=$?
 set -e
 

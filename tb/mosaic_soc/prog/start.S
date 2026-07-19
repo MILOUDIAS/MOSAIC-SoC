@@ -13,16 +13,31 @@
 # so it is RV32E-safe (TITAN's ISA is rv32emc). The poll loop makes the run
 # deterministic regardless of serv's bit-serial slowness.
 
+#if defined(MOSAIC_USE_BUILD_GENERATED_HEADERS)
+#include <mosaic_memory_map.inc>
+#define DEMO_SENT_BASE MOSAIC_ASM_SENTINEL_BASE
+#define DEMO_TDU_WAKE_REQ MOSAIC_ASM_TDU_WAKE_REQ
+#define DEMO_SOC_CTRL MOSAIC_ASM_SOC_CTRL_BASE
+#define DEMO_STACK_TOP (MOSAIC_ASM_SRAM_BASE + MOSAIC_ASM_SRAM_SIZE - 16)
+#define DEMO_WAKE_WORKERS MOSAIC_ASM_WORKER_HART_MASK
+#else
+#define DEMO_SENT_BASE 0x00003000
+#define DEMO_TDU_WAKE_REQ 0x200A000C
+#define DEMO_SOC_CTRL 0x20000000
+#define DEMO_STACK_TOP 0x00007FF0
+#define DEMO_WAKE_WORKERS 0x6
+#endif
+
     .equ TITAN_SENT,   0xC0FFEE00      # TITAN's sentinel value
-    .equ SENT_BASE,    0x00003000      # sentinel block: TITAN@0, ATLAS@4, NANO@8
-    .equ TDU_WAKE_REQ, 0x200A000C      # TDU_START_ADDRESS(0x200A0000) + WAKE_REQ(0x0C)
-    .equ WAKE_WORKERS, 0x6             # (1<<1)|(1<<2): wake hart1 (ATLAS) + hart2 (NANO)
-    .equ SOC_CTRL,     0x20000000      # soc_ctrl base (EXIT_VALID@0x00, EXIT_VALUE@0x04)
+    .equ SENT_BASE,    DEMO_SENT_BASE  # sentinel block: TITAN@0, ATLAS@4, NANO@8
+    .equ TDU_WAKE_REQ, DEMO_TDU_WAKE_REQ
+    .equ WAKE_WORKERS, DEMO_WAKE_WORKERS
+    .equ SOC_CTRL,     DEMO_SOC_CTRL   # soc_ctrl base (EXIT_VALID@0x00, EXIT_VALUE@0x04)
 
     .section .text.init,"ax"
     .global _start
 _start:
-    li   sp, 0x00007FF0                # stack near top of RAM0
+    li   sp, DEMO_STACK_TOP            # stack near top of generated SRAM
 
     # 1. TITAN sentinel
     li   t0, TITAN_SENT

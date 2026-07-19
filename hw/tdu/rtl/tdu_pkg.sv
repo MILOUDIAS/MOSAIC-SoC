@@ -12,12 +12,13 @@ package tdu_pkg;
 
   // ── Scheduling modes ────────────────────────────────────────────
   typedef enum logic [1:0] {
-    SCHED_STATIC     = 2'd0,  // TITAN assigns tasks to fixed cores
-    SCHED_DYNAMIC    = 2'd1,  // TITAN migrates tasks based on CPI estimates
-    SCHED_POWER_AWARE = 2'd2  // TITAN biases placement by energy budget
+    SCHED_STATIC      = 2'd0,  // software uses the descriptor's fixed hint
+    SCHED_DYNAMIC     = 2'd1,  // software policy may use the CPI telemetry
+    SCHED_POWER_AWARE = 2'd2   // software policy may use energy telemetry
   } sched_mode_e;
 
   // ── Register byte offsets (32-bit word-addressed) ───────────────
+  // CORE_STATUS ABI: running[15:0], sleeping[31:16].
   localparam logic [31:0] TDU_CORE_STATUS_OFFSET   = 32'h00;  // RO
   localparam logic [31:0] TDU_SCHED_MODE_OFFSET    = 32'h04;  // RW
   localparam logic [31:0] TDU_WAKE_MASK_OFFSET     = 32'h08;  // RW
@@ -27,6 +28,11 @@ package tdu_pkg;
   localparam logic [31:0] TDU_TASK_STATUS_OFFSET   = 32'h18;  // RO
   localparam logic [31:0] TDU_ENERGY_COUNTER_OFFSET = 32'h1C; // RO/RC
   localparam logic [31:0] TDU_CPI_EST_BASE_OFFSET  = 32'h20;  // RW array
+  // W1S pulse used by a worker after completing its current descriptor.  The
+  // cpu subsystem consumes the pulse to re-park/reset that hart; a later wake
+  // therefore starts the worker from its boot entry again.  0x60 is beyond
+  // the largest supported CPI array (16 harts -> 0x20..0x5c).
+  localparam logic [31:0] TDU_PARK_REQ_OFFSET       = 32'h60;
 
   // Total address span of the CPI estimate array (one 32-bit word per hart).
   // The array is mapped at TDU_CPI_EST_BASE_OFFSET .. +4*NUM_HARTS.

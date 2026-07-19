@@ -21,8 +21,9 @@ INC=hw/core-v-mini-mcu/include
 SERV=hw/vendor/mosaic/serv
 FAZ=hw/vendor/mosaic/fazyrv
 CC=hw/vendor/pulp_platform/common_cells/include
+TC=hw/vendor/pulp_platform/tech_cells_generic/src/rtl/tc_clk.sv
 
-TPLS=$(find . \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
+TPLS=$(find . \( -path './build/*' -o -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
     -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
     -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
 
@@ -30,6 +31,12 @@ gen () {  # $1 = mosaic config
   $PY util/xheep_gen/mcu_gen.py --mosaic_config "$1" \
       --base_config configs/general.hjson --pads_cfg configs/pad_cfg.py \
       --outtpl "$TPLS" --externaltpl "" >/dev/null
+  MANIFEST=$($PY util/xheep_gen/build_manifest.py locate --config "$1" \
+      --base-config configs/general.hjson --pads-cfg configs/pad_cfg.py \
+      --repo-root "$REPO")
+  GENERATED_ROOT=$($PY -c \
+      'import json,sys; print(json.load(open(sys.argv[1]))["generated_root"])' \
+      "$MANIFEST")
 }
 
 echo "### [1/4] generating RTL for configs/mosaic_sim.yaml ..."
@@ -42,11 +49,12 @@ verilator --binary -j 0 --top-module mosaic_multicore_tb --Mdir "$OBJ" \
   -Wno-fatal -Wno-WIDTH -Wno-UNUSEDSIGNAL -Wno-UNDRIVEN -Wno-UNUSEDPARAM \
   -Wno-DECLFILENAME -Wno-TIMESCALEMOD -Wno-PINMISSING -Wno-CASEINCOMPLETE \
   -Wno-SYMRSVDWORD -Wno-GENUNNAMED -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
-  -I$CC -I$INC \
+  -I$CC -I$GENERATED_ROOT/hw/core-v-mini-mcu/include -I$INC \
   -y $INC -y $SERV/rtl -y $SERV/servile -y $FAZ/rtl -y hw/sci -y hw/core-v-mini-mcu \
   $INC/obi_pkg.sv $INC/reg_pkg.sv $INC/fifo_pkg.sv $INC/addr_map_rule_pkg.sv \
-  $INC/core_v_mini_mcu_pkg.sv \
-  hw/core-v-mini-mcu/cpu_subsystem.sv \
+  $GENERATED_ROOT/hw/core-v-mini-mcu/include/core_v_mini_mcu_pkg.sv \
+  $TC \
+  $GENERATED_ROOT/hw/core-v-mini-mcu/cpu_subsystem.sv \
   $TB/tb_obi_mem.sv $TB/mosaic_multicore_tb.sv
 
 echo "### [3/4] running simulation ..."

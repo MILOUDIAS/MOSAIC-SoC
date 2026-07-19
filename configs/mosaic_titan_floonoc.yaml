@@ -15,6 +15,7 @@
 soc:
   name: mosaic_titan_floonoc
   pdk: gf180mcu
+  profile: testbench       # shared hand-written assembly spans mixed ABIs
 
   cores:
     - ip: cv32e20         # harts 0-1 — hart 0 is the SMP orchestrator

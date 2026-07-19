@@ -7,7 +7,11 @@ module debug_subsystem
 #(
     parameter NRHARTS = 1,
     parameter JTAG_IDCODE = 32'h10001c05,
-    parameter SPI_SLAVE = 0
+    parameter SPI_SLAVE = 0,
+    // One bit per hart that actually implements halt/resume debug.  The DM
+    // must report wrappers without a debug transport as unavailable instead
+    // of accepting commands that can never complete.
+    parameter logic [NRHARTS-1:0] HART_DEBUG_CAPABLE = '1
 ) (
     input logic clk_i,
     input logic rst_ni,
@@ -50,7 +54,7 @@ module debug_subsystem
       hartinfo[i].dataaccess = 1'b1;  // data registers are memory mapped in the debugger
       hartinfo[i].datasize = dm::DataCount;
       hartinfo[i].dataaddr = dm::DataAddr;
-      unavailable[i] = ~(1'b1);
+      unavailable[i] = ~HART_DEBUG_CAPABLE[i];
     end
   end
 

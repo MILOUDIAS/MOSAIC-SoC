@@ -4,7 +4,7 @@
 # Identical topology to mosaic_wake_demo.yaml (1 cv32e20 TITAN + 1 fazyrv ATLAS
 # + 1 serv NANO, per-worker boot addresses), but the system bus is the LOG
 # fabric: a fixed-latency tcdm_interconnect over 16 word-interleaved SRAM banks
-# (13 bus masters -> next pow2 = 16) plus the variable-latency crossbar for the
+# (11 bus masters -> next pow2 = 16) plus the variable-latency crossbar for the
 # non-memory tier. Run with:
 #   MOSAIC_CFG=configs/mosaic_wake_demo_log.yaml tb/mosaic_soc/run.sh
 

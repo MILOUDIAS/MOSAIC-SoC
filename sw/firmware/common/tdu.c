@@ -15,6 +15,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(MOSAIC_USE_BUILD_GENERATED_HEADERS)
+#include <mosaic_topology.h>
+#else
+#include "mosaic_legacy_config.h"
+#endif
+
 /** MMIO region handle for the TDU register space. */
 static mmio_region_t tdu_region = {0};
 
@@ -66,6 +72,11 @@ void tdu_wake_harts(uint32_t hart_mask) {
     mmio_region_write32(tdu, (ptrdiff_t)TDU_WAKE_REQ_REG_OFFSET, hart_mask);
 }
 
+void tdu_park_harts(uint32_t hart_mask) {
+    mmio_region_t tdu = tdu_get_region();
+    mmio_region_write32(tdu, (ptrdiff_t)TDU_PARK_REQ_REG_OFFSET, hart_mask);
+}
+
 // ── Core status ────────────────────────────────────────────────────
 
 tdu_core_status_t tdu_get_core_status(void) {
@@ -81,6 +92,7 @@ tdu_core_status_t tdu_get_core_status(void) {
 // ── Task queue ─────────────────────────────────────────────────────
 
 int tdu_task_push(const tdu_task_t *task) {
+    if (task == NULL || task->core_hint >= MOSAIC_NUM_HARTS) return -1;
     tdu_task_status_t st = tdu_get_task_status();
     if (st.full) return -1;
 
@@ -91,6 +103,7 @@ int tdu_task_push(const tdu_task_t *task) {
 }
 
 int tdu_task_pop(tdu_task_t *task) {
+    if (task == NULL) return -1;
     tdu_task_status_t st = tdu_get_task_status();
     if (st.empty) return -1;
 
@@ -145,6 +158,7 @@ void tdu_clear_energy_counter(void) {
 // ── Convenience: dispatch task + wake ──────────────────────────────
 
 int tdu_dispatch_task(const tdu_task_t *task) {
+    if (task == NULL || task->core_hint >= MOSAIC_NUM_HARTS) return -1;
     if (tdu_task_push(task) != 0) return -1;
 
     // Wake the target core if it's in the wake mask and currently sleeping.

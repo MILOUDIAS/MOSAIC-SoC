@@ -13,5 +13,5 @@ Skills:
   - doc-gen:       generate docs from configs and run artifacts
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __original__ = "oh-my-pi"  # upstream pattern this is based on

@@ -12,24 +12,44 @@ REPO="$(cd "$HERE/../.." && pwd)"
 cd "$REPO"
 TC="${RISCV_TC:-/opt/riscv32-gnu-toolchain-elf-bin/bin/riscv32-unknown-elf}"
 MOSAIC_CFG="${MOSAIC_CFG:-configs/mosaic_wake_demo.yaml}"
+PY="$REPO/.venv/bin/python"
+[ -x "$PY" ] || PY=python3
 
 echo "### [1/4] generating RTL ($MOSAIC_CFG) ..."
-TPLS=$(find . \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
+TPLS=$(find . \( -path './build/*' -o -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
     -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
     -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
-python3 util/xheep_gen/mcu_gen.py --mosaic_config "$MOSAIC_CFG" --base_config configs/general.hjson \
-    --pads_cfg configs/pad_cfg.py --outtpl "$TPLS" --externaltpl "" >/dev/null 2>&1 || { echo "RTL gen failed"; exit 1; }
+"$PY" util/xheep_gen/mcu_gen.py --mosaic_config "$MOSAIC_CFG" --base_config configs/general.hjson \
+    --pads_cfg configs/pad_cfg.py --output-root build/mosaic --outtpl "$TPLS" --externaltpl "" >/dev/null 2>&1 || { echo "RTL gen failed"; exit 1; }
+MANIFEST="$("$PY" util/xheep_gen/build_manifest.py locate --config "$MOSAIC_CFG" \
+    --base-config configs/general.hjson --pads-cfg configs/pad_cfg.py --repo-root "$REPO")" || exit 1
+MOSAIC_GENERATED_ROOT="$("$PY" -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["generated_root"])' \
+    "$MANIFEST")" || exit 1
+MOSAIC_SW_INCLUDE="$MOSAIC_GENERATED_ROOT/sw/include"
+[ -f "$MOSAIC_SW_INCLUDE/mosaic_memory_map.inc" ] \
+    || { echo "generated software contract missing"; exit 1; }
+RISCV_XHEEP="${RISCV_XHEEP:-$(dirname "$(dirname "$TC")")}" \
+COMPILER_PREFIX="${COMPILER_PREFIX:-$(basename "$TC" | sed 's/elf$//')}" \
+    scripts/fusesoc-setup.sh --manifest "$MANIFEST" > "$HERE/fusesoc-setup-icarus.log" 2>&1 \
+    || { echo "FuseSoC setup failed — see $HERE/fusesoc-setup-icarus.log"; exit 1; }
+BUILD_ROOT="$(sed -n 's/^FUSESOC_BUILD_ROOT=//p' "$HERE/fusesoc-setup-icarus.log" | tail -1)"
+[ -n "$BUILD_ROOT" ] && [ -d "$BUILD_ROOT" ] || { echo "FuseSoC build root missing"; exit 1; }
 
 echo "### [2/4] assembling the 3 programs (rv32i) ..."
 ( cd "$HERE/prog"
   for s in start atlas nano; do
-    $TC-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -c "$s.S" -o "$s.o" || exit 1
+    $TC-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding \
+      -DMOSAIC_USE_BUILD_GENERATED_HEADERS -I "$MOSAIC_SW_INCLUDE" \
+      -c "$s.S" -o "$s.o" || exit 1
   done
-  $TC-ld -T link.ld start.o atlas.o nano.o -o prog.elf || exit 1
+  $TC-ld -T "$MOSAIC_GENERATED_ROOT/sw/linker/mosaic_link.ld" \
+    start.o atlas.o nano.o -o prog.elf || exit 1
   $TC-objcopy -O verilog prog.elf prog.hex || exit 1 ) || { echo "program build failed"; exit 1; }
 
 echo "### [3/4] assembling the Icarus filelist + compiling ..."
-python3 "$HERE/gen_filelist.py" "$REPO" > "$HERE/soc.f" || exit 1
+"$PY" "$HERE/gen_filelist.py" "$REPO" --manifest "$MANIFEST" --build-root "$BUILD_ROOT" \
+    > "$HERE/soc.f" || exit 1
 # Verilator -f -> Icarus: +incdir+ from -I, keep -y, keep .sv/.v EXCEPT the real
 # uartdpi.sv (stubbed); drop -Wno/-CFLAGS/-G/.vlt/.c/.cpp and tb_top.sv (we use mosaic_tb).
 INCS=$(grep -E '^-I/' "$HERE/soc.f" | sed -E 's#^-I#+incdir+#' | tr '\n' ' ')
@@ -55,9 +75,11 @@ iverilog -g2012 -gsupported-assertions -s mosaic_tb -o "$HERE/sim.vvp" \
 
 echo "### [4/4] running with vvp ..."
 vvp "$HERE/sim.vvp" +firmware="$HERE/prog/prog.hex" +boot_sel=0 2>&1 | tee "$HERE/icarus_sim.log" | tail -25
+SIM_RC=${PIPESTATUS[0]}
 echo ""
-if grep -q "EXIT SUCCESS" "$HERE/icarus_sim.log"; then
+if [ "$SIM_RC" -eq 0 ] && grep -q "EXIT SUCCESS" "$HERE/icarus_sim.log"; then
   echo "### RESULT: EXIT SUCCESS — multi-core wake-and-run works on Icarus ✓"
 else
-  echo "### RESULT: no EXIT SUCCESS (see $HERE/icarus_sim.log)"
+  echo "### RESULT: simulation failed or no EXIT SUCCESS (see $HERE/icarus_sim.log)"
+  exit 1
 fi

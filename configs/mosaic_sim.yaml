@@ -12,6 +12,7 @@
 soc:
   name: mosaic_sim
   pdk: gf180mcu
+  profile: testbench       # worker-only: hart 0 is a testbench bootstrap, never a production policy
 
   cores:
     - ip: serv             # bit-serial, unified-OBI SCI wrapper (W=1)

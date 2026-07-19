@@ -31,13 +31,23 @@ if [ -n "$VPIN" ] && [ -x "$VPIN/usr/bin/verilator" ]; then
 fi
 MOSAIC_CFG="${MOSAIC_CFG:-configs/mosaic_wake_demo.yaml}"
 OBJ="$HERE/obj_dir"
+PY="$REPO/.venv/bin/python"
+[ -x "$PY" ] || PY=python3
 
 echo "### [1/4] generating RTL ($MOSAIC_CFG: 1 TITAN + 1 ATLAS + 1 NANO) ..."
-TPLS=$(find . \( -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
+TPLS=$(find . \( -path './build/*' -o -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
     -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
     -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
-python3 util/xheep_gen/mcu_gen.py --mosaic_config "$MOSAIC_CFG" --base_config configs/general.hjson \
-    --pads_cfg configs/pad_cfg.py --outtpl "$TPLS" --externaltpl "" >/dev/null 2>&1 || { echo "RTL gen failed"; exit 1; }
+"$PY" util/xheep_gen/mcu_gen.py --mosaic_config "$MOSAIC_CFG" --base_config configs/general.hjson \
+    --pads_cfg configs/pad_cfg.py --output-root build/mosaic --outtpl "$TPLS" --externaltpl "" >/dev/null 2>&1 || { echo "RTL gen failed"; exit 1; }
+MANIFEST="$("$PY" util/xheep_gen/build_manifest.py locate --config "$MOSAIC_CFG" \
+    --base-config configs/general.hjson --pads-cfg configs/pad_cfg.py --repo-root "$REPO")" || exit 1
+MOSAIC_GENERATED_ROOT="$("$PY" -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["generated_root"])' \
+    "$MANIFEST")" || exit 1
+MOSAIC_SW_INCLUDE="$MOSAIC_GENERATED_ROOT/sw/include"
+[ -f "$MOSAIC_SW_INCLUDE/mosaic_memory_map.inc" ] \
+    || { echo "generated software contract missing"; exit 1; }
 # The FuseSoC setup regenerates the regtool outputs (power_manager_reg_* etc.)
 # and the sim-verilator filelist for THIS config. Skipping it leaves stale
 # per-bank register RTL behind: e.g. a power manager generated for fewer RAM
@@ -46,24 +56,45 @@ python3 util/xheep_gen/mcu_gen.py --mosaic_config "$MOSAIC_CFG" --base_config co
 echo "###       running FuseSoC setup (register generators + filelist) ..."
 RISCV_XHEEP="${RISCV_XHEEP:-$(dirname "$(dirname "$TC")")}" \
 COMPILER_PREFIX="${COMPILER_PREFIX:-$(basename "$TC" | sed 's/elf$//')}" \
-    scripts/fusesoc-setup.sh > "$HERE/fusesoc-setup.log" 2>&1 \
+    scripts/fusesoc-setup.sh --manifest "$MANIFEST" > "$HERE/fusesoc-setup.log" 2>&1 \
     || { echo "FuseSoC setup failed — see $HERE/fusesoc-setup.log"; exit 1; }
+BUILD_ROOT="$(sed -n 's/^FUSESOC_BUILD_ROOT=//p' "$HERE/fusesoc-setup.log" | tail -1)"
+[ -n "$BUILD_ROOT" ] && [ -d "$BUILD_ROOT" ] || { echo "FuseSoC build root missing"; exit 1; }
 
 echo "### [2/4] assembling the 3 programs (TITAN + ATLAS + NANO, rv32i, ld-linked) ..."
 # All three assembled as base rv32i (no compressed / no M): the serial cores
 # (fazyrv RVC=NONE, serv COMPRESSED=0) can't decode compressed insns, and cve2
 # runs rv32i fine. Linked into one ELF (sections at 0x180/0x1000/0x2000).
+#
+# Berkeley RV64 tiles (rocket/boom, SIM-ONLY) cache the SRAM region, so their
+# workers store sentinels through the tile's UNCACHED CLINT-range window
+# (0x0200_0000+off, bridge-translated back to 0x3000+off) — swap in the *_tl
+# worker programs when the generated cpu_subsystem instantiates those cores.
+# (rv32i encodings are valid RV64I for these programs.) NOTE: the swap is
+# all-or-nothing; a config mixing a berkeley worker with a non-berkeley
+# worker would need per-hart program selection here.
+ATLAS_S=atlas; NANO_S=nano
+CPU_SUBSYSTEM="$("$PY" util/xheep_gen/build_manifest.py generated-path --manifest "$MANIFEST" \
+    --logical-path hw/core-v-mini-mcu/cpu_subsystem.sv)" || exit 1
+if grep -qE "rocket_sci|boom_sci" "$CPU_SUBSYSTEM" 2>/dev/null; then
+  ATLAS_S=atlas_tl; NANO_S=nano_tl
+  echo "    (berkeley tiles detected: using CLINT-window worker programs)"
+fi
 ( cd "$HERE/prog"
-  for s in start atlas nano; do
-    $TC-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -c "$s.S" -o "$s.o" || exit 1
+  for s in start "$ATLAS_S" "$NANO_S"; do
+    $TC-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding \
+      -DMOSAIC_USE_BUILD_GENERATED_HEADERS -I "$MOSAIC_SW_INCLUDE" \
+      -c "$s.S" -o "$s.o" || exit 1
   done
-  $TC-ld -T link.ld start.o atlas.o nano.o -o prog.elf || exit 1
+  $TC-ld -T "$MOSAIC_GENERATED_ROOT/sw/linker/mosaic_link.ld" \
+    start.o "$ATLAS_S.o" "$NANO_S.o" -o prog.elf || exit 1
   $TC-objcopy -O verilog prog.elf prog.hex || exit 1 ) || { echo "program build failed"; exit 1; }
 echo "    firmware: $HERE/prog/prog.hex"
 
 echo "### [3/4] building the full-SoC Verilator model (this takes a few minutes) ..."
 rm -rf "$OBJ"
-python3 "$HERE/gen_filelist.py" "$REPO" > "$HERE/soc.f" || { echo "filelist gen failed"; exit 1; }
+"$PY" "$HERE/gen_filelist.py" "$REPO" --manifest "$MANIFEST" --build-root "$BUILD_ROOT" \
+    > "$HERE/soc.f" || { echo "filelist gen failed"; exit 1; }
 # Pure-SV tb_top top + --binary (Verilator's own main); uartdpi.c is the only
 # C model (DPI import). The DPI-export-free tb_util shadow dodges the codegen bug.
 verilator --binary -j 0 --top-module tb_top \
@@ -74,9 +105,11 @@ verilator --binary -j 0 --top-module tb_top \
 
 echo "### [4/4] running the simulation ..."
 "$OBJ/Vtb_top" +firmware="$HERE/prog/prog.hex" +boot_sel=0 +maxcycles=300000 +verbose 2>&1 | tee "$HERE/sim.log" | tail -30
+SIM_RC=${PIPESTATUS[0]}
 echo ""
-if grep -q "EXIT SUCCESS" "$HERE/sim.log"; then
+if [ "$SIM_RC" -eq 0 ] && grep -q "EXIT SUCCESS" "$HERE/sim.log"; then
   echo "### RESULT: EXIT SUCCESS — full multi-core SoC executed the program ✓"
 else
-  echo "### RESULT: no EXIT SUCCESS (see $HERE/sim.log)"
+  echo "### RESULT: simulation failed or no EXIT SUCCESS (see $HERE/sim.log)"
+  exit 1
 fi

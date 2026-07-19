@@ -23,6 +23,27 @@
  */
 
 #include "tdu.h"
+#ifdef MOSAIC_FLASH_XIP
+#include "cold_boot.h"
+#endif
+
+/* Standalone firmware builds use the checked-in canonical generated contract.
+ * Isolated build bundles define MOSAIC_USE_BUILD_GENERATED_HEADERS and place
+ * their config-specific include directory on the compiler search path. */
+#if defined(MOSAIC_USE_BUILD_GENERATED_HEADERS)
+#include <mosaic_memory_map.h>
+#include <mosaic_topology.h>
+#else
+#include "mosaic_legacy_config.h"
+#endif
+
+#if !MOSAIC_TDU_ENABLED
+#error "titan_main.c is the TDU worker-dispatch demo and requires scheduler.tdu=true"
+#endif
+
+#if MOSAIC_NUM_HARTS > 16
+#error "the current TDU firmware interface supports at most 16 harts"
+#endif
 
 /** Sentinel value written by TITAN to prove it executed. */
 #define SENTINEL_TITAN_VAL  0xC0FFEE00u
@@ -32,21 +53,6 @@
 
 /** Sentinel value written by NANO workers. */
 #define SENTINEL_NANO_VAL   0x4E414E00u
-
-/**
- * Number of ATLAS (FazyRV) worker cores in the PoC configuration.
- * PoC config: 2 ATLAS (fazyrv, hart 1-2).
- */
-#define NUM_ATLAS 2
-
-/**
- * Number of NANO (SERV) worker cores in the PoC configuration.
- * PoC config: 4 NANO (serv, hart 3-6).
- */
-#define NUM_NANO  4
-
-/** Total number of worker cores (ATLAS + NANO). */
-#define NUM_WORKERS (NUM_ATLAS + NUM_NANO)
 
 /** Task ID for sensor-polling tasks (dispatched to NANO). */
 #define TASK_ID_SENSOR_POLL  0x0001u
@@ -70,9 +76,12 @@
  * @return Number of set bits.
  */
 static inline uint32_t popcount32(uint32_t x) {
-    x = x - ((x >> 1) & 0x55555555u);
-    x = (x & 0x33333333u) + ((x >> 2) & 0x33333333u);
-    return (((x + (x >> 4)) & 0x0F0F0F0Fu) * 0x01010101u) >> 24;
+    uint32_t count = 0u;
+    while (x != 0u) {
+        x &= x - 1u;
+        count++;
+    }
+    return count;
 }
 
 /** MMIO region handle for shared sentinel memory. */
@@ -82,7 +91,7 @@ static mmio_region_t sentinel_region = {0};
  * Initialize the shared sentinel memory region.
  */
 static void sentinel_init(void) {
-    sentinel_region = mmio_region_from_addr(SENTINEL_BASE);
+    sentinel_region = mmio_region_from_addr(MOSAIC_SENTINEL_BASE);
 }
 
 /**
@@ -121,6 +130,17 @@ static void signal_failure(uint32_t code);
  */
 int main(void) {
     system_init();
+#ifdef MOSAIC_FLASH_XIP
+    const uint32_t cold_boot_status = mosaic_cold_boot_load_workers();
+    if (cold_boot_status != 0u) {
+        signal_failure(cold_boot_status);
+    }
+#ifdef MOSAIC_COLD_BOOT_SMOKE
+    /* Focused gate used to prove flash-only loading without waiting for the
+     * much slower XIP orchestration demo. Production run_fw leaves this off. */
+    signal_success();
+#endif
+#endif
     tdu_configure();
     dispatch_workers();
     wait_for_completion();
@@ -143,9 +163,12 @@ static void system_init(void) {
     /* Write TITAN sentinel to prove we're alive. */
     sentinel_write(0x00u, SENTINEL_TITAN_VAL);
 
-    /* Clear worker sentinels (in case of warm restart). */
-    sentinel_write(0x04u, 0u);
-    sentinel_write(0x08u, 0u);
+    /* Clear every configured worker sentinel (in case of warm restart). */
+    for (uint32_t hart = 0; hart < MOSAIC_NUM_HARTS; hart++) {
+        if ((MOSAIC_WORKER_HART_MASK & (1u << hart)) != 0u) {
+            sentinel_write((ptrdiff_t)(hart * 4u), 0u);
+        }
+    }
 
     /* Clear energy counter for measurement. */
     tdu_clear_energy_counter();
@@ -154,64 +177,71 @@ static void system_init(void) {
 /**
  * Configure TDU scheduling parameters.
  *
- * Sets scheduling mode to DYNAMIC and pre-loads CPI estimates for the
- * scheduler. The wake mask is armed in dispatch_workers() after all
- * descriptors are queued: the TDU's auto-wake is targeted by core_hint
- * (bug 20 fix), so this batching is no longer load-bearing, but keeping
- * dispatch independent of the auto-wake path also exercises the explicit
- * WAKE_REQ release and stays robust if the wake semantics ever change.
+ * Sets the generated scheduling mode and pre-loads role-appropriate CPI
+ * estimates. dispatch_workers() changes the wake mask per descriptor so only
+ * the intended hart can consume it, then restores the full worker mask.
  */
 static void tdu_configure(void) {
-    /* Set scheduling mode to DYNAMIC (TITAN migrates tasks based on CPI). */
-    tdu_set_sched_mode(TDU_SCHED_DYNAMIC);
+    /* The scheduler reset/default and firmware now come from the same YAML. */
+    tdu_set_sched_mode(MOSAIC_SCHED_MODE);
 
     /* Pre-load CPI estimates for the workers (used by DYNAMIC scheduler). */
-    for (uint32_t i = 1; i <= NUM_ATLAS; i++) {
-        /* ATLAS (fazyrv): CPI ~4 (chunk-serial, moderate speed). */
-        tdu_set_cpi_estimate(i, 4u);
-    }
-    for (uint32_t i = NUM_ATLAS + 1; i <= NUM_WORKERS; i++) {
-        /* NANO (serv): CPI ~32 (bit-serial, very slow). */
-        tdu_set_cpi_estimate(i, 32u);
+    for (uint32_t hart = 0; hart < MOSAIC_NUM_HARTS; hart++) {
+        const uint32_t bit = 1u << hart;
+        if ((MOSAIC_ATLAS_HART_MASK & bit) != 0u) {
+            tdu_set_cpi_estimate(hart, 4u);
+        } else if ((MOSAIC_NANO_HART_MASK & bit) != 0u) {
+            tdu_set_cpi_estimate(hart, 32u);
+        }
     }
 }
 
 /**
  * Dispatch tasks to worker cores via the TDU.
  *
- * Signal-processing tasks go to ATLAS (harts 1-2), sensor-polling
- * tasks go to NANO (harts 3-6).
+ * Signal-processing tasks go to the generated ATLAS mask; sensor-polling
+ * tasks go to the generated NANO mask.
  *
- * Push-all-then-wake: every descriptor must be in the task FIFO before
- * any worker starts, because a woken worker reaches TASK_POP within a
- * few instructions while this dispatch loop takes hundreds of cycles
- * per push — waking incrementally lets fast workers pop an empty FIFO
- * (raw 0 -> sentinel slot 0) and strands the remaining descriptors.
+ * Hand off one descriptor at a time. Before each push, only its hinted hart
+ * is enabled in WAKE_MASK; the hardware atomically enqueues and wakes that
+ * hart. TITAN waits until the descriptor has been popped before publishing
+ * the next one. This guarantees that a worker executes (and later parks)
+ * its own hinted descriptor, while previously handed-off workers continue
+ * computing concurrently. It also scales safely beyond the 8-entry FIFO.
  */
 static void dispatch_workers(void) {
     tdu_task_t task;
 
-    /* Queue signal-processing tasks for ATLAS cores. */
-    for (uint32_t i = 0; i < NUM_ATLAS; i++) {
-        task.task_id   = TASK_ID_SIGNAL_PROC;
-        task.core_hint = (uint8_t)(1u + i);
-        task.prio      = 0u;
-        tdu_task_push(&task);
+    for (uint32_t hart = 0; hart < MOSAIC_NUM_HARTS; hart++) {
+        const uint32_t bit = 1u << hart;
+        uint32_t handoff_timeout = POLL_TIMEOUT;
+        if ((MOSAIC_ATLAS_HART_MASK & bit) != 0u) {
+            task.task_id = TASK_ID_SIGNAL_PROC;
+            task.prio = 0u;
+        } else if ((MOSAIC_NANO_HART_MASK & bit) != 0u) {
+            task.task_id = TASK_ID_SENSOR_POLL;
+            task.prio = 1u;
+        } else {
+            continue;
+        }
+        task.core_hint = (uint8_t)hart;
+        tdu_set_wake_mask(bit);
+        if (tdu_task_push(&task) != 0) {
+            signal_failure(0xD1500000u | hart);
+        }
+
+        /* Only this target was released, so an empty queue proves that it
+         * accepted its descriptor. Do not wake the next hart before then. */
+        while (!tdu_get_task_status().empty && handoff_timeout > 0u) {
+            handoff_timeout--;
+        }
+        if (handoff_timeout == 0u) {
+            signal_failure(0xD1510000u | hart);
+        }
     }
 
-    /* Queue sensor-polling tasks for NANO cores. */
-    for (uint32_t i = 0; i < NUM_NANO; i++) {
-        task.task_id   = TASK_ID_SENSOR_POLL;
-        task.core_hint = (uint8_t)(NUM_ATLAS + 1u + i);
-        task.prio      = 1u;
-        tdu_task_push(&task);
-    }
-
-    /* All descriptors queued — now arm auto-wake for future pushes and
-     * release every worker in one WAKE_REQ pulse. */
-    uint32_t worker_mask = ((1u << NUM_WORKERS) - 1u) << 1u;
-    tdu_set_wake_mask(worker_mask);
-    tdu_wake_harts(worker_mask);
+    /* Leave the configured worker set armed for later policy iterations. */
+    tdu_set_wake_mask(MOSAIC_WORKER_HART_MASK);
 }
 
 /**
@@ -223,33 +253,33 @@ static void dispatch_workers(void) {
  */
 static void wait_for_completion(void) {
     uint32_t timeout = POLL_TIMEOUT;
+    uint32_t done_mask = 0u;
 
-    /* Wait for ATLAS workers (sentinel slots at offset 0x04 and 0x08). */
-    uint32_t atlas_done = 0;
-    while (atlas_done < NUM_ATLAS && timeout > 0) {
-        uint32_t mask = 0u;
-        if (sentinel_read(0x04u) == SENTINEL_ATLAS_VAL) mask |= 1u;
-        if (sentinel_read(0x08u) == SENTINEL_ATLAS_VAL) mask |= 2u;
-        atlas_done = popcount32(mask);
-        timeout--;
-    }
-
-    /* Wait for NANO workers (sentinel slots at offset 0x0C..0x18). */
-    uint32_t nano_done = 0;
-    timeout = POLL_TIMEOUT;
-    while (nano_done < NUM_NANO && timeout > 0) {
-        uint32_t mask = 0u;
-        for (uint32_t i = 0; i < NUM_NANO; i++) {
-            ptrdiff_t off = (ptrdiff_t)(0x0Cu + i * 4u);
-            if (sentinel_read(off) == SENTINEL_NANO_VAL) mask |= (1u << i);
+    while (done_mask != MOSAIC_WORKER_HART_MASK && timeout > 0u) {
+        done_mask = 0u;
+        for (uint32_t hart = 0; hart < MOSAIC_NUM_HARTS; hart++) {
+            const uint32_t bit = 1u << hart;
+            uint32_t expected;
+            if ((MOSAIC_ATLAS_HART_MASK & bit) != 0u) {
+                expected = SENTINEL_ATLAS_VAL;
+            } else if ((MOSAIC_NANO_HART_MASK & bit) != 0u) {
+                expected = SENTINEL_NANO_VAL;
+            } else {
+                continue;
+            }
+            if (sentinel_read((ptrdiff_t)(hart * 4u)) == expected) {
+                done_mask |= bit;
+            }
         }
-        nano_done = popcount32(mask);
         timeout--;
     }
 
     /* Check for timeout. */
-    if (atlas_done < NUM_ATLAS || nano_done < NUM_NANO) {
-        signal_failure((atlas_done << 16) | nano_done);
+    if (done_mask != MOSAIC_WORKER_HART_MASK) {
+        signal_failure(
+            (popcount32(done_mask) << 16) |
+            popcount32(MOSAIC_WORKER_HART_MASK)
+        );
     }
 
     /* Read final energy counter for reporting. */
@@ -266,7 +296,7 @@ static void signal_success(void) {
 /**
  * Signal test failure with an error code.
  *
- * @code Packed error: (atlas_done << 16) | nano_done.
+ * @code Packed error: (completed_workers << 16) | expected_workers.
  */
 static void signal_failure(uint32_t code) {
     soc_ctrl_exit(code);
