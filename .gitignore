@@ -28,6 +28,10 @@ obj_O0/
 obj_bisect/
 results.xml
 
+# Icarus Verilog compiled output (tb/gls/obj/gls.vvp is ~128 MB — over the limit).
+tb/gls/obj/
+*.vvp
+
 # Local-only reference IPs and agent tool state — never commit
 refs/
 .commandcode/
