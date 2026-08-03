@@ -4,6 +4,18 @@
 #
 # Author(s): Juan Sapriza, David Mallasen
 # Description: Pad configuration for X-HEEP
+#
+# ############################################################################
+# NOT USED BY THE CHIPATHON BLOCK A TAPEOUT.
+#
+# This declares ~55 signal pins for the CHIP-LEVEL x-heep pad ring. The
+# Chipathon submission is a 22-pin hard MACRO with no pad ring of its own
+# (flow/librelane/experimental/mosaic_block_a.sv); its pin contract is that
+# wrapper's port list, LVS-verified against extracted layout.
+#
+# mcu_gen.py still requires --pads_cfg, so this file is passed and its pad
+# ring is simply not instantiated in the macro. See docs/rtl_freeze_blocka.md.
+# ############################################################################
 
 from xheep import XHeep
 from pads.pad_ring import PadRing

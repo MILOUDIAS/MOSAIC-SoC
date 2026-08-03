@@ -34,6 +34,8 @@ soc:
     sram_kb: 64           # 32 banks x 2 KB (see header)
     boot_rom_kb: 2
 
+  dma: idma
+
   bus: log
   bus_opts:
     log:

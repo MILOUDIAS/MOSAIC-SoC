@@ -13,8 +13,8 @@ used to generate custom SRAM macros for the MOSAIC-SoC multi-core generator.
 | `gds_lib/cell1rw.gds` | ⚠️ Needed | 6T bitcell GDS — extract from PDK or copy from upstream OpenRAM |
 | `sp_lib/cell1rw.sp` | ⚠️ Needed | 6T bitcell SPICE — extract from PDK or copy from upstream OpenRAM |
 | `custom/gf180_bitcell.py` | ✅ Created | Bitcell wrapper for OpenRAM factory |
-| `configs/mosaic_sram_4k.py` | ✅ Created | 4KB SRAM config (512×8, conservative) |
-| `configs/mosaic_sram_32k.py` | ✅ Created | 32KB SRAM config (4096×8, 2-bank) |
+| `configs/mosaic_sram_512b.py` | ✅ Created | 512 B SRAM config (512×8, conservative) |
+| `configs/mosaic_sram_4k.py` | ✅ Created | 4 KiB SRAM config (4096×8, 2-bank) |
 
 ## Porting steps
 
@@ -43,10 +43,23 @@ used to generate custom SRAM macros for the MOSAIC-SoC multi-core generator.
 
 ## SRAM configs
 
-| Config | Size | Words × Bits | Banks | Area (est.) |
-|--------|------|-------------|-------|-------------|
-| `mosaic_sram_4k.py` | 4 KB | 512 × 8 | 1 | ~0.05 mm² |
-| `mosaic_sram_32k.py` | 32 KB | 4096 × 8 | 2 | ~0.3-0.6 mm² |
+| Config | Capacity | Words × Bits | Banks | Area (est., UNVERIFIED) |
+|--------|----------|-------------|-------|-------------|
+| `mosaic_sram_512b.py` | 512 B | 512 × 8 | 1 | ~0.05 mm² |
+| `mosaic_sram_4k.py` | 4 KiB | 4096 × 8 | 2 | ~0.3-0.6 mm² |
+
+> **Capacity is words × bits ÷ 8.** Both configs were previously named one
+> binary step too large (`mosaic_sram_4k.py` for a 512-byte array,
+> `mosaic_sram_32k.py` for a 4 KiB one) because the bit count was reported as
+> bytes. Renamed per roadmap §14.1; the arrays themselves are unchanged.
+>
+> **The area estimates are OpenRAM geometry and have never been compiled or
+> measured.** For scale, the foundry's own `gf180mcu_fd_ip_sram__sram512x8m8wm1`
+> measures 431.9 × 484.9 µm = **0.209 mm² for 512 bytes** (from its LEF `SIZE`),
+> i.e. 0.419 mm²/KB — putting 4 KiB at 1.675 mm² in PDK macros. These estimates
+> are optimistic by roughly 3–5× against that reference. Do not use them in an
+> area budget until a real OpenRAM run exists. See
+> [`docs/area_study_gf180_min_soc.md`](../../../docs/area_study_gf180_min_soc.md).
 
 ## Integration with LibreLane
 

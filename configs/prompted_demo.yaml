@@ -1,6 +1,7 @@
 soc:
   name: prompted_demo
   pdk: gf180mcu
+  target: rtl
   cores:
   - ip: cv32e20
     count: 1
@@ -19,6 +20,7 @@ soc:
   memory:
     sram_kb: 64
     boot_rom_kb: 2
+  dma: idma
   bus: obi
   scheduler:
     tdu: true

@@ -236,6 +236,15 @@ class XHeep:
         if self.are_base_peripherals_configured():
             dma = self._base_peripheral_domain.get_dma()
             if dma is not None:
+                # Counted even when soc.dma is "none". The DMA is then stubbed
+                # to one master port and its instantiation is skipped, but
+                # core_v_mini_mcu_pkg.sv.tpl computes SYSTEM_XBAR_NMASTER from
+                # get_num_master_ports() without consulting get_is_included(),
+                # so subtracting here would make this count disagree with the
+                # generated RTL -- and this value drives the LOG-bus bank check.
+                # The residual cost is two unused crossbar masters; removing
+                # them means changing the template and the DMA port indices
+                # together.
                 dma_ports = int(dma.get_num_master_ports())
         dma_obi_ports = 2 if self.is_multi_core() else 3
         return 2 * nh + 1 + dma_obi_ports * dma_ports

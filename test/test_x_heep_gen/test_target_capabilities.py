@@ -22,6 +22,14 @@ from harness.skills.config_author import ConfigAuthor
 
 
 def _soc() -> dict:
+    """The QUALIFIED physical part: Chipathon Block A.
+
+    This used to be the 7-hart PoC, which never had physical evidence behind
+    it. A schematic reviewer caught the consequence: the design being taped out
+    and the design the generator called 'tapeout' were different chips. The
+    matrix now describes what was actually hardened and signed off --
+    2x SERV in a 1117.5 um square macro. See docs/rtl_freeze_blocka.md.
+    """
     return {
         "soc": {
             "name": "physical_contract",
@@ -29,20 +37,23 @@ def _soc() -> dict:
             "profile": "soc",
             "target": "tapeout",
             "cores": [
-                {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
-                {
-                    "ip": "fazyrv", "isa": "rv32i", "chunksize": 8,
-                    "count": 2, "role": "atlas", "boot_addr": 0x1000,
-                },
-                {
-                    "ip": "serv", "isa": "rv32i", "count": 4,
-                    "role": "nano", "boot_addr": 0x2000,
-                },
+                {"ip": "serv", "isa": "rv32ic", "count": 1, "role": "titan",
+                 "with_csr": 1, "compressed": 1},
+                {"ip": "serv", "isa": "rv32i", "count": 1, "role": "atlas",
+                 "boot_addr": 0x40010000, "with_csr": 0},
             ],
-            "memory": {"sram_kb": 32, "boot_rom_kb": 2},
+            "memory": {"sram_kb": 0, "scratchpad_bytes": 128, "boot_rom_kb": 1},
+            "dma": "none",
+            "debug": False,
+            "plic": False,
+            "spi_mode": "xip_only",
+            "multicore_timer": False,
+            "gpio_ao": False,
+            "ao_rv_timer": False,
+            "ao_fast_intr": False,
             "bus": "obi",
             "scheduler": {"tdu": True, "mode": "dynamic"},
-            "peripherals": ["uart", "gpio", "timer", "spi"],
+            "peripherals": ["uart"],
         }
     }
 
@@ -62,12 +73,22 @@ def test_qualified_tapeout_matrix_and_parser_target(tmp_path):
         (lambda s: s.update({"pdk": "sky130"}), "qualified only for pdk"),
         (lambda s: s.update({"bus": "log"}), "qualified only for bus"),
         (lambda s: s.update({"bus": "floonoc"}), "qualified only for bus"),
-        (lambda s: s["memory"].update({"sram_kb": 64}), "sram_kb=32"),
-        (lambda s: s["memory"].update({"boot_rom_kb": 4}), "boot_rom_kb=2"),
+        (lambda s: s["memory"].update({"sram_kb": 64}), "sram_kb=0"),
+        (lambda s: s["memory"].update({"boot_rom_kb": 4}), "boot_rom_kb=1"),
+        (lambda s: s["memory"].update({"scratchpad_bytes": 512}), "scratchpad_bytes=128"),
         (lambda s: s.update({"profile": "testbench"}), "requires soc.profile: soc"),
-        (lambda s: s["cores"][1].update({"count": 1}), "canonical PoC topology"),
+        (lambda s: s["cores"][1].update({"count": 2}), "Block A topology"),
         (lambda s: s["scheduler"].update({"mode": "static"}), "mode='dynamic'"),
-        (lambda s: s.update({"peripherals": ["uart"]}), "uart/gpio/timer/spi"),
+        (lambda s: s.update({"peripherals": ["uart", "gpio"]}), "requires peripherals uart"),
+        # every platform block Block A removes must stay removed
+        (lambda s: s.update({"dma": "idma"}), "requires soc.dma='none'"),
+        (lambda s: s.update({"debug": True}), "requires soc.debug=False"),
+        (lambda s: s.update({"plic": True}), "requires soc.plic=False"),
+        (lambda s: s.update({"spi_mode": "full"}), "requires soc.spi_mode='xip_only'"),
+        (lambda s: s.update({"ao_rv_timer": True}), "requires soc.ao_rv_timer=False"),
+        # an OMITTED knob is judged on its effective default, not waved through
+        (lambda s: s.pop("plic"), "requires soc.plic=False"),
+        (lambda s: s.pop("dma"), "requires soc.dma='none'"),
     ],
 )
 def test_tapeout_rejects_unqualified_physical_combinations(mutate, needle):
@@ -77,18 +98,40 @@ def test_tapeout_rejects_unqualified_physical_combinations(mutate, needle):
 
 
 def test_log_floonoc_sky130_and_other_memory_remain_rtl_usable():
-    variants = []
+    """The tapeout gate must not narrow what the GENERATOR can build.
+
+    Started from a conventional RAM-backed SoC rather than the Block A fixture:
+    Block A has no SRAM pool at all, and the log/FlooNoC fabrics have their own
+    bank rules, so reusing it here would fail for reasons that have nothing to
+    do with the property under test.
+    """
+    def _rtl_base() -> dict:
+        return {
+            "soc": {
+                "name": "rtl_space",
+                "pdk": "gf180mcu",
+                "profile": "soc",
+                "target": "rtl",
+                "cores": [
+                    {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
+                    {"ip": "serv", "isa": "rv32i", "count": 1, "role": "nano",
+                     "boot_addr": 0x800},
+                ],
+                "memory": {"sram_kb": 32, "boot_rom_kb": 2},
+                "bus": "obi",
+                "scheduler": {"tdu": True, "mode": "dynamic"},
+                "peripherals": ["uart", "gpio", "timer", "spi"],
+            }
+        }
+
     for update in (
         {"pdk": "sky130"},
         {"bus": "log"},
         {"bus": "floonoc"},
         {"memory": {"sram_kb": 64, "boot_rom_kb": 4}},
     ):
-        raw = _soc()
-        raw["soc"]["target"] = "rtl"
+        raw = _rtl_base()
         raw["soc"].update(update)
-        variants.append(raw)
-    for raw in variants:
         assert validate_config(raw) == [], raw
 
 
@@ -105,16 +148,32 @@ def test_sim_only_core_is_explicitly_scoped_away_from_tapeout():
     assert validate_config(raw) == []
 
 
-def test_config_author_labels_only_the_qualified_poc_as_tapeout(tmp_path):
+def test_config_author_labels_only_block_a_as_tapeout(tmp_path):
+    """Only the part with physical evidence may claim 'tapeout'."""
     author = ConfigAuthor(repo_root=tmp_path)
+    blocka = author.generate(
+        name="blocka", preset="blocka", output_path=tmp_path / "blocka.yaml"
+    )
     poc = author.generate(name="poc", preset="poc", output_path=tmp_path / "poc.yaml")
     minimal = author.generate(
         name="minimal", preset="minimal", output_path=tmp_path / "minimal.yaml"
     )
-    assert poc.ok, poc.errors
-    assert minimal.ok, minimal.errors
-    assert poc.details["config"]["soc"]["target"] == "tapeout"
+    for r in (blocka, poc, minimal):
+        assert r.ok, r.errors
+    assert blocka.details["config"]["soc"]["target"] == "tapeout"
+    # the 7-hart PoC never had physical evidence; it must not claim tapeout
+    assert poc.details["config"]["soc"]["target"] == "rtl"
     assert minimal.details["config"]["soc"]["target"] == "rtl"
+
+
+def test_shipped_frozen_config_is_accepted_by_the_tapeout_gate():
+    """configs/mosaic_tapeout_ultra.yaml declares target: tapeout -- the gate
+    must agree, or the repository contradicts itself again."""
+    raw = yaml.safe_load(
+        (REPO_ROOT / "configs" / "mosaic_tapeout_ultra.yaml").read_text()
+    )
+    assert raw["soc"]["target"] == "tapeout"
+    assert validate_config(raw) == []
 
 
 def _hashed(path: Path, relative: str) -> dict:
@@ -196,22 +255,26 @@ def _bundle(tmp_path: Path, *, placeholder: bool = False) -> Path:
             "bus": "obi",
             "cores": [
                 {
-                    "ip": "cv32e20", "isa": "rv32emc", "role": "titan",
-                    "count": 1, "params": {},
+                    "ip": "serv", "isa": "rv32ic", "role": "titan",
+                    "count": 1, "params": {"with_csr": 1, "compressed": 1},
                 },
                 {
-                    "ip": "fazyrv", "isa": "rv32i", "role": "atlas",
-                    "count": 2,
-                    "params": {"chunksize": 8, "boot_addr": 0x1000},
-                },
-                {
-                    "ip": "serv", "isa": "rv32i", "role": "nano",
-                    "count": 4, "params": {"boot_addr": 0x2000},
+                    "ip": "serv", "isa": "rv32i", "role": "atlas",
+                    "count": 1, "params": {"boot_addr": 0x40010000, "with_csr": 0},
                 },
             ],
-            "memory": {"declared_sram_kb": 32, "declared_boot_rom_kb": 2},
+            "platform": {
+                "dma": "none", "debug": False, "plic": False,
+                "spi_mode": "xip_only", "multicore_timer": False,
+                "gpio_ao": False, "ao_rv_timer": False, "ao_fast_intr": False,
+            },
+            "memory": {
+                "declared_sram_kb": 0,
+                "declared_boot_rom_kb": 1,
+                "declared_scratchpad_bytes": 128,
+            },
             "scheduler": {"tdu": True, "mode": "dynamic"},
-            "declared_peripherals": ["uart", "gpio", "timer", "spi"],
+            "declared_peripherals": ["uart"],
         },
         "physical_attestation": {
             "build_key": build_key,

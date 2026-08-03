@@ -1,6 +1,6 @@
 # MOSAIC-SoC Progress Dashboard
 
-> **IEEE SSCS Chipathon 2026 · Track D · GF180MCU · Updated: 2026-07-19**
+> **IEEE SSCS Chipathon 2026 · Track D · GF180MCU · Updated: 2026-08-03**
 
 ---
 
@@ -9,11 +9,37 @@
 ```
 PHASE 1 — Config-Driven Multi-Core Generator   █████████████████████  99%
 PHASE 2 — Agentic Harness (oh-my-soc)          █████████████████████  99%
-PHASE 3 — Physical Design (GF180MCU)           ██████░░░░░░░░░░░░░░░  30%
-OVERALL                                        ████████████████░░░░  81%
+PHASE 3 — Physical Design (GF180MCU)           ████████████████░░░░░  80%
+OVERALL                                        █████████████████░░░  87%
 ```
 
-**Headline:** the SoC now boots the production path **flash-only** — boot ROM → SPI-XIP
+**Headline (2026-08-02):** the Block A macro is **DRC and LVS clean**, and the RTL is
+frozen and tagged (`rtl-freeze-blocka-v2`) in answer to the schematic review — see
+[`docs/rtl_freeze_blocka.md`](docs/rtl_freeze_blocka.md) and
+[`docs/chipathon_review_response.md`](docs/chipathon_review_response.md).
+The macro has been **re-hardened** with the bug-31 fix in it and the electrical repair
+enabled: **max-cap 27 → 0, max-fanout 411 → 1, max-slew 2 889 → 591** against the library's
+own 4.0 ns limit, at *lower* utilization (84.4%) and less wire than before.
+`mosaic_tapeout_ultra` hardened to exactly **1117.5 × 1117.5 µm = 1.2488 mm²** (a quarter
+of the 2235 µm shared MPW die, 22 pins) now passes the full deck set with nothing skipped:
+**Magic DRC 0, KLayout DRC 0, Netgen LVS "circuits match uniquely", XOR 0, antenna 0,
+routing DRC 0, 0 power-grid violations, IR drop 104 µV on 5 V**, timing closed at all nine
+corners (setup +20.72 ns, hold +0.055 ns, TNS 0). LVS matched the 22-pin contract against
+extracted layout rather than taking the wrapper's word for it. Getting there cost three
+bugs (28–30), one of them a `soc_ctrl` breakage introduced by an earlier fix and hidden by
+`ERROR_ON_SYNTH_CHECKS: false`. **Remaining electrical gap: 591 max-slew violations**
+(max-cap and max-fanout are closed at 0 and 1) — untouched by DRC/LVS and not implied by
+setup/hold closing.
+Area came down 3.903 → 1.249 mm² (−68%) through measured cuts, not estimates; see
+[`docs/area_study_gf180_min_soc.md`](docs/area_study_gf180_min_soc.md) §8c–§8g. The MPW
+block plan is [`docs/padrinrg/padring_proposal.jpg`](docs/padrinrg/padring_proposal.jpg).
+The hardening is now reproducible on any machine: the checked-in LibreLane configs carry
+**no absolute paths** — `flow/librelane/scripts/gen_filelist.py` resolves the source list
+from the FuseSoC manifest at run time — so a fresh clone hardens with `make mosaic-gen
+MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml` then
+`flow/librelane/experimental/run_signoff.sh`, no hand-editing (D-90).
+
+**Previously:** the SoC boots the production path **flash-only** — boot ROM → SPI-XIP
 TITAN → CRC-checked worker loading → 6-worker TDU dispatch → **EXIT SUCCESS** — on top of
 a hardened generator (strict shared core registry, heterogeneous per-hart RTL, topology-
 derived firmware/linkers/flash manifests, content-addressed builds, fail-closed `target:
@@ -22,22 +48,23 @@ approval gates + evidence binding), and a beginner `tutorial/` walks the whole s
 
 | Metric | Value |
 |--------|-------|
-| Bugs found & fixed | 21 (see [Bug Tracker](#7-bug-tracker-all-fixed)) |
+| Bugs found & fixed | 35 (see [Bug Tracker](#7-bug-tracker-all-fixed)) — 9 new from the physical flow; one (28) was introduced by the fix for another; **31 was CRITICAL** (SERV could not load from flash); 32–33 were measurement/flow faults, 34–35 are PDK/tooling findings, not RTL |
 | Core IPs integrated | 12 / 12 (cv32e20, cv32e40x, cva6†, ibex, fazyrv, hazard3, picorv32, qerv, serv, snitch, rocket†, boom†) — †sim-only |
 | SCI wrappers | 9 (fazyrv, serv, ibex, picorv32, snitch, cva6, rocket, boom, hazard3 — qerv reuses serv) |
 | Bus fabrics | 3 (OBI crossbar · logarithmic interconnect · FlooNoC) |
-| Test suites | 16 suite rows below, all green (26-step sweep + Jul 13 hardening re-verify + tb-matrix coverage) |
+| Shipped configs | 29 under `configs/` — incl. `mosaic_tapeout_ultra` (the Block A candidate) |
+| Platform knobs | 8 selectable blocks: `dma` `debug` `plic` `spi_mode` `multicore_timer` `gpio_ao` `ao_rv_timer` `ao_fast_intr` |
+| Test suites | 16 suite rows below, all green (26-step sweep + tb-matrix coverage); generator pytests **661** across 27 files |
 | Harness skills | 10 + built-in agent runtime (`./oh-my-soc` executable, omp-style driver picker, `oh-my-soc agent` dispatch; cards in `.claude/skills/` for Claude Code + omp) |
 | Firmware size | 1,592 B text (production) · 2,440 B text (sched demo) |
-| Commits | 39 on `true-multicore-generator` (Phase-2 harness + hardening sprints landed Jul 12–17) |
+| Commits | 69 on `mld-exp` (22 ahead of `origin/dev-mld`; area-reduction + Block A sprint landed Jul 29–31) |
 
 ### What passes today
 
-Last full sweep: **2026-07-12** (26-step, after the Phase-2 harness + Hazard3
-additions: +wake-demo-hazard3, +soc-from-prompt no-LLM pipeline, +tb-sci
-single-hart TBs) — all green. The **2026-07-13 generator-hardening pass**
-re-verified the canonical 7-hart, 607-file full-SoC run, the flash-only
-production boot, and the complete pytest suite on top of it.
+Last full sweep: **2026-07-12** (26-step) — all green. The **2026-07-31 area /
+physical pass** added the eight platform knobs above, re-verified every shipped
+config, and took `mosaic_tapeout_ultra` through LibreLane to a routed GDS in the
+Chipathon Block A envelope (0 routing DRC, 0 antenna, timing closed all corners).
 
 | Suite | Command | Proves | Result |
 |-------|---------|--------|--------|
@@ -56,7 +83,10 @@ production boot, and the complete pytest suite on top of it.
 | Generic per-hart boot TB | `tb/mosaic_soc/run_generic.sh` | consumes generated boot metadata, builds ABI-correct per-image firmware (mixed RV32E/RV32/RV64), requires **every** configured hart to report | EXIT SUCCESS |
 | tb-matrix combination coverage | `./oh-my-soc tb-matrix run --tier {validate,render,sim}` | the integration SPACE: 248-config pairwise covering array (validate), mcu-gen render, all-hart liveness on curated corners | 248/248 validate; 3 sim EXIT SUCCESS incl. 2 never-tested combos (2026-07-19) |
 | Flash-only production boot | `tb/mosaic_soc/run_fw.sh` (flash path) | boot ROM → SPI-XIP TITAN → CRC-checked worker loading → 6-worker TDU dispatch, no sim-side memory preload | EXIT SUCCESS |
-| Generator + harness pytests | `pytest test/test_x_heep_gen -m "not slow"` | config registry, per-hart RTL gen, software gen, build manifests, target capabilities, harness skills, agent runtime, tb-matrix coverage | **439 pass** (2026-07-19) |
+| **Block A from a prompt** | `./demo/03_blocka_from_prompt.sh` | the frozen tapeout config is reachable from one natural-language prompt — all 16 fields including the 8 platform knobs — and the capability gate refuses the same prompt when a claim is false | 16/16 fields, 2 false claims refused (2026-08-03) |
+| **Gate-level simulation (Block A)** | `tb/gls/run_gls.sh` | the POST-P&R netlist -- the gates in the GDS -- boots XIP from a behavioural flash through only the 22 bonded pins, no backdoor loads | EXIT SUCCESS in **12 399 cycles** vs RTL's ~12 400 (2026-08-03) |
+| **UART bring-up (Block A)** | `MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml tb/mosaic_soc/run_uart.sh` | TX FIFO depth is really 4 (the area cut), polled TX byte-for-byte against the UART DPI log, RX via system loopback; reads its message from flash, so it also regresses bug 31 | EXIT SUCCESS (2026-08-02) |
+| Generator + harness pytests | `pytest test/test_x_heep_gen -m "not slow"` | config registry, per-hart RTL gen, software gen, build manifests, target capabilities, harness skills, agent runtime, tb-matrix coverage, LibreLane filelist | **661 pass** (2026-08-03) |
 
 ---
 
@@ -76,9 +106,14 @@ M10: Multi-fabric bus (log + FlooNoC)  █████████████�
 M11: Production firmware full-SoC sim  ████████████████████  DONE     (Jul 09)
 M15: Harness v2 + Hazard3 integration  ████████████████████  DONE     (Jul 12)
 M16: Generator hardening + flash boot  ████████████████████  DONE     (Jul 13)
-M12: LibreLane pin-binding + SRAM      ████░░░░░░░░░░░░░░░░  IN PROG
-M13: DRC/LVS clean signoff             ░░░░░░░░░░░░░░░░░░░░  PLANNED
-M14: Tapeout-ready GDSII               ░░░░░░░░░░░░░░░░░░░░  PLANNED
+M17: Area reduction 3.903 → 1.249 mm²  ████████████████████  DONE     (Jul 31)
+M18: Block A routed GDS (22 pins)      ████████████████████  DONE     (Jul 31)
+M12: LibreLane pin-binding + SRAM      ████░░░░░░░░░░░░░░░░  IN PROG  (not needed for the MPW macro path)
+M13: DRC/LVS clean signoff             ████████████████████  DONE     (Aug 01, nothing skipped)
+M20: RTL freeze + review response      ████████████████████  DONE     (Aug 02, rtl-freeze-blocka-v2)
+M21: Gate-level simulation             ████████████████░░░░  DONE*    (Aug 03; functional yes, timing-annotated blocked)
+M19: Block A power delivery (PSM)      ████████████████████  DONE     (Aug 01, 0 grid violations)
+M14: Tapeout-ready GDSII               ████████████░░░░░░░░  IN PROG  ← re-harden after bug 31, then slew/cap/fanout repair
 ```
 
 ---
@@ -89,9 +124,12 @@ M14: Tapeout-ready GDSII               ░░░░░░░░░░░░░�
 
 | ID | Task | Component | Blocker / Notes |
 |----|------|-----------|-----------------|
-| **P-01** | LibreLane `mosaic_soc_core.sv` pin-binding | `flow/librelane/src/` | TODO at line 68 — needs `x_heep_system` instantiation + pad-to-pin wiring |
-| **P-02** | Pad map finalization | `flow/librelane/slots/` | `slot_mosaic.yaml` exists, needs completion for all SoC signals |
-| **P-03** | SRAM hard macro generation | `sw/vendor/openram/` | Configs ready; needs GF180 PDK + OpenRAM installed to generate GDS/LEF/LIB |
+| **P-07** | ~~DRC + LVS on the Block A GDS~~ **DONE 2026-08-01** | `flow/librelane/experimental/` | All decks clean via `config_blocka_signoff.yaml` (no `--skip`). Succeeded by **P-10** (re-harden after bug 31) and **P-11** (repair 2 889 max-slew / 411 max-fanout / 27 max-cap violations, which no deck checks) |
+| **P-08** | ~~Block A power delivery (`PSM-0069`)~~ **RESOLVED 2026-08-01** | `flow/librelane/experimental/` | Ring restored on Metal4/Metal5 by *omitting* `PDN_CORE_{VERTICAL,HORIZONTAL}_LAYER` — `pdn_cfg.tcl` then defaults them to the strap layers and leaves the three `info exists`-guarded `add_pdn_connect` calls dormant, so neither `PDN-0186` nor bug 27 recurs. `config_blocka_signoff.yaml` measures `PSM-0040 all shapes connected` on both nets and **0 power-grid violations** |
+| **P-09** | Confirm the Block A pin contract | MPW integrator | 22 pins fixed; `bufz_4` QSPI drive provisional; `status_o[6:0]` must be bonded |
+| **P-01** | LibreLane `mosaic_soc_core.sv` pin-binding | `flow/librelane/src/` | TODO at line 68. *Chip-level only — the MPW path ships a macro, so this is no longer on the critical path* |
+| **P-02** | Pad map finalization | `flow/librelane/slots/` | `slot_mosaic.yaml` is a 68-pad chip ring. *Not used by Block A (22-pin macro, shared MPW ring)* |
+| **P-03** | SRAM hard macro generation | `sw/vendor/openram/` | Configs ready. *Deprioritised: PDK cuts measured area-negative below ~512 B (area study §8f)* |
 | **P-05** | Ibex prim de-dup for co-build | `hw/vendor/mosaic/ibex/` | Ibex has own prim closure; de-dup needed for full FuseSoC build |
 | **P-06** | GF180 SRAM bitcell extraction | `sw/vendor/openram/gf180mcu/gds_lib/` | Need cell1rw.gds + sp from PDK or upstream OpenRAM |
 
@@ -99,9 +137,9 @@ M14: Tapeout-ready GDSII               ░░░░░░░░░░░░░�
 
 | ID | Task | Priority | Component | Notes |
 |----|------|----------|-----------|-------|
-| **N-06** | GF180MCU DRC/LVS signoff | **HIGH** | `flow/librelane/` | No actual signoff run yet |
-| **N-07** | 50 MHz STA closure | **HIGH** | `flow/librelane/` | SDC exists; no timing analysis run |
-| **N-08** | Target area validation (1.249 mm²) | MED | Post-synthesis | No area data yet |
+| **N-06** | GF180MCU DRC/LVS signoff | **HIGH** | `flow/librelane/` | Still open — decks never run on any GDS. Tracked as P-07 |
+| **N-07** | ~~50 MHz~~ STA closure | **HIGH** | `flow/librelane/` | **Re-scoped.** Multi-corner STA now runs and Block A CLOSES at 10 MHz: setup +20.67 ns, hold +0.075 ns, TNS 0 at every corner. 50 MHz was never re-attempted after the clock was relaxed to cut timing-repair buffers (0.326 → 0.114 mm²). **Decide whether 50 MHz is still a requirement** |
+| **N-08** | ~~Target area validation (1.249 mm²)~~ | ~~MED~~ | Post-synthesis + P&R | ✅ **DONE 2026-07-31.** Block A hardened to exactly 1117.5 × 1117.5 µm = **1.2488 mm²** — the Chipathon slot. Full measured path 3.903 → 1.249 mm² in area study §8c–§8g. Moved to the Done log as D-81/D-84 |
 | **N-05** | Per-core power domains | LOW | `ao_peripheral_subsystem.sv.tpl` | Power manager is single-domain |
 | **N-09** | Formal verification (riscv-formal) | LOW | SCI wrappers | Not started |
 | **N-10** | FPGA bitstream generation | LOW | `hw/fpga/` | Structure exists; no flow completed |
@@ -227,12 +265,25 @@ Seventy-eight deliverables, grouped by area. IDs are stable (referenced elsewher
 | D-31 | GF180 pad frame | `flow/librelane/src/chip_top.sv` | Elaborates clean |
 | D-46 | OpenRAM GF180 technology config | `sw/vendor/openram/gf180mcu/tech/tech.py` | 3.3V params, corrected layer map, DRC rules |
 | D-47 | OpenRAM bitcell wrapper | `sw/vendor/openram/gf180mcu/custom/gf180_bitcell.py` | GF180MCU 6T cell wrapper for OpenRAM factory |
-| D-48 | OpenRAM 4KB SRAM config | `sw/vendor/openram/configs/mosaic_sram_4k.py` | 512×8, single bank, ~0.05 mm² est. |
-| D-49 | OpenRAM 32KB SRAM config | `sw/vendor/openram/configs/mosaic_sram_32k.py` | 4096×8, 2 banks, ~0.3-0.6 mm² est. |
+| D-48 | OpenRAM 512 B SRAM config | `sw/vendor/openram/configs/mosaic_sram_512b.py` | 512×8 = 512 bytes, single bank, ~0.05 mm² est. (unverified) |
+| D-49 | OpenRAM 4 KiB SRAM config | `sw/vendor/openram/configs/mosaic_sram_4k.py` | 4096×8 = 4 KiB, 2 banks, ~0.3-0.6 mm² est. (unverified) |
 | D-50 | LibreLane config.yaml SRAM macros | `flow/librelane/config.yaml` | MACROS section + PDN_MACRO_CONNECTIONS |
 | D-51 | LibreLane pdn_cfg.tcl SRAM grid | `flow/librelane/pdn_cfg.tcl` | define_pdn_grid + add_pdn_connect for SRAM |
 | D-52 | LibreLane config_classic.yaml SRAM | `flow/librelane/config_classic.yaml` | MACROS section for classic (core-only) flow |
 | D-53 | OpenRAM directory README | `sw/vendor/openram/README.md` | Porting guide, status, known issues |
+| D-78 | Selectable platform blocks (8 knobs) | `util/xheep_gen/core_registry.py`, `mosaic_config.py` | `dma` `debug` `plic` `spi_mode` `multicore_timer` `gpio_ao` `ao_rv_timer` `ao_fast_intr`; defaults preserve behaviour |
+| D-79 | Template gates + tie-offs for every optional block | `hw/core-v-mini-mcu/*.tpl`, `hw/vendor/xheep/spi/rtl/spi_subsystem.sv.tpl` | Removed blocks answer error+ready, never left undriven |
+| D-80 | GF180 cell bindings | `hw/asic/gf180/{tc_clk,gf180_sram_blackbox,sram_wrapper}.sv` | ICG bind (no latch cell in GF180), attributed blackboxes, cut-by-depth SRAM |
+| D-81 | GF180 area study §8c–§8g | `docs/area_study_gf180_min_soc.md` | 3.903 → 1.249 mm², every step measured |
+| D-82 | `mosaic_tapeout_ultra` config | `configs/mosaic_tapeout_ultra.yaml` | The Block A candidate: 2× SERV, UART, XIP, 128 B scratchpad |
+| D-83 | Chipathon Block A 22-pin macro | `flow/librelane/experimental/mosaic_block_a.sv` | Exposes 22 pins, terminates 251 ports internally |
+| D-84 | **Block A signed-off GDS** | `flow/librelane/experimental/runs/blocka_signoff/final/` | 1117.5 µm square. Magic DRC 0, KLayout DRC 0, Netgen LVS "circuits match uniquely", XOR 0, antenna 0, routing DRC 0, IR drop 104 µV. Re-hardened 2026-08-02 with the bug-31 fix and post-GRT electrical repair: max-cap 0, max-fanout 1, max-slew 591. Reproducible from a fresh clone since D-90 — the config that built it no longer names a path from this machine |
+| D-86 | **RTL freeze record + review response** | `docs/rtl_freeze_blocka.md`, `docs/chipathon_review_response.md`, tag `rtl-freeze-blocka-v1` | Frozen config, verification trace, 22-pin map, waivers, tool versions; point-by-point answer to the schematic review. Open item 8 (absolute paths in the LibreLane configs) closed 2026-08-03 by D-90 |
+| D-89 | **Prompt → tapeout config showcase** | `demo/03_blocka_from_prompt.sh`, `harness/skills/soc_from_prompt.py` | The Block A part generated from one prompt, field-for-field identical to the hand-written config; false `tapeout` claims refused by the capability gate |
+| D-88 | **Gate-level simulation** | `tb/gls/` | Functional GLS on the routed netlist passes cycle-for-cycle with RTL. Timing-annotated GLS blocked: PDK models use `ifnone` on edge-sensitive paths (illegal per IEEE 1364-2005 §14.2.6) and CVC segfaults at this scale |
+| D-87 | **UART bring-up test** | `tb/mosaic_soc/run_uart.sh`, `prog_uart/uart.S` | TX FIFO depth measured = 4, polled TX verified against the UART DPI log, RX via loopback. EXIT SUCCESS. Doubles as the bug-31 regression |
+| D-85 | `test_dma_selection.py` | `test/test_x_heep_gen/` | 71 tests pinning the knob contracts + the documented xbar-master limitation |
+| D-90 | **Run-time LibreLane filelist** — the hardening configs carry no absolute paths | `flow/librelane/scripts/gen_filelist.py`, `flow/librelane/experimental/run_signoff.sh` | `VERILOG_FILES` + `VERILOG_INCLUDE_DIRS` resolved from the FuseSoC manifest at run time — the D-59 approach, now on the hardening flow. Configs 767 → 241 and 657 → 131 lines, ~526 absolute paths gone. `--verify` reproduced the old list exactly (507/507 files) and a run from the composed config synthesised to 854 954 µm² / 33 852 cells / 0 check errors — identical to the signoff. If the RTL has not been generated the runner stops rather than reaching for whatever bundle is on disk. Guarded by `test_librelane_filelist.py` (8 tests: no config may regain an absolute path or a hand-pasted source list) |
 
 ---
 
@@ -262,9 +313,11 @@ Seventy-eight deliverables, grouped by area. IDs are stable (referenced elsewher
 | **oh-my-soc** | `harness/` | 10 skills + agent runtime + `./oh-my-soc` CLI | pytest + live hazard3 fetch→scaffold→TB→wake proof | `harness/` | DONE |
 | **PLIC** | OpenTitan IP | N/A | Single-target | `peripheral` | PARTIAL |
 | **Power mgr** | x-heep IP | N/A | Single-domain | `ao_peripheral` | PARTIAL |
-| **LibreLane flow** | `chip_top.sv` | `mosaic_soc_core.sv` | — | Flow wired | PARTIAL |
+| **LibreLane flow (chip)** | `chip_top.sv` | `mosaic_soc_core.sv` is a stub | — | Flow wired | PARTIAL — not needed for the MPW macro path |
+| **LibreLane flow (Block A)** | `mosaic_block_a.sv` | 22 pins, ties off 251 ports | Routed GDS, 0 DRC/antenna | `flow/librelane/experimental/` | **ROUTED — DRC/LVS NOT RUN** |
+| **GF180 cell bindings** | `tc_clk.sv` ICG, SRAM blackboxes, `bufz_4` | — | Synthesised clean | `hw/asic/gf180/` | DONE |
 | **OpenRAM GF180** | `tech/tech.py` | `gf180_bitcell.py` | Configs written | `sw/vendor/openram/` | PARTIAL |
-| **SRAM macros** | Configs ready | PDK needed | Not generated | `flow/librelane/` | BLOCKED |
+| **SRAM macros** | Configs ready | PDK cuts bound in `hw/asic/gf180/` | Not generated | `flow/librelane/` | DEPRIORITISED — measured area-negative below ~512 B |
 
 ---
 
@@ -401,6 +454,35 @@ built-in `oh-my-soc agent` runtime for API-driven sessions.
 | 19 | Linker placed `.sbss`/stack at 0x3000 — TITAN's globals collide with the worker sentinel window (TDU region ptr clobbered by own sentinel write → wild store) | CRITICAL | Production-fw sim | `sw/firmware/mosaic_link.ld` |
 | 20 | TDU auto-wake fired for ALL masked sleeping cores on ANY push (no core_hint decode) → workers popped the FIFO before their descriptors were queued; spurious wakes also inflate the energy counter | HIGH | Production-fw sim | `tdu.sv` (targeted `1<<core_hint` decode) + `titan_main.c` push-all-then-wake + worker park-on-empty-pop |
 | 21 | **Simulator, not RTL:** oss-cad-suite Verilator nightly (5.047 devel, v5.046-70 "(mod)") DFG optimizer miscompiles cv32e40x's load-use-hazard halt — one of two *identical* e40x instances executed the boot-ROM `bnez` with the load's address-phase ALU result (`halt_id=0` while `load_stall=1`, combinationally impossible per the RTL) → hart 2 branched to `_copy_from_flash` and spun on the SPI controller forever. `-fno-dfg` alone fixes it; `-O0` fixes it; stable releases are clean. RTL exonerated only after a 7-probe chain (bus → WB → regfile → decode → branch-operand → hazard → FSM) | CRITICAL | All-TITAN SMP demo | Pinned Verilator 5.050 (`/mnt/.../tools/verilator-5.050`, `VERILATOR_PIN` env override) in all `tb/mosaic_soc/run*.sh` |
+| 22 | `soc.dma: none` left `ao_peripheral_slv_rsp[DMA_IDX]` and `[DMA_CH0_IDX]` undriven — the DMA still occupies its slots in the AO register demux, so any access to that window would hang the bus forever | CRITICAL | `yosys check` (Checker.YosysSynthChecks) | `ao_peripheral_subsystem.sv.tpl` — answers error+ready |
+| 23 | `soc.spi_mode: xip_only` gated the OpenTitan host but left the `w25q128jw_controller` branch live; that controller exists only to drive the host, so its `reg_mux` response came back undriven | CRITICAL | `yosys check` | `spi_subsystem.sv.tpl` — w25q gated off in xip_only, `ot_reg_rsp_o` tied error+ready |
+| 24 | **GF180 has no latch cell.** pulp's generic `tc_clk_gating` models gating with a behavioural latch, which survives synthesis as an unmapped `$_DLATCH_N_` — nothing for the placer to place | HIGH | Checker.YosysUnmappedCells | `hw/asic/gf180/tc_clk.sv` — rebound to the library ICG `icgtp_1` |
+| 25 | The PDK's SRAM `__blackbox.v` views are empty modules with **no `(* blackbox *)` attribute**, so yosys reports every `Q` bit as "used but has no driver" — 32 errors for a 4-cut bank | HIGH | Checker.YosysSynthChecks | `hw/asic/gf180/gf180_sram_blackbox.sv` |
+| 26 | Tristates are not mapped by `dfflibmap`/`abc`: `assign pad = oe ? d : 1'bz` leaves unmapped `$_TBUF_` cells. GF180 *does* have `bufz_*`/`invz_*`, they must be named | HIGH | Checker.YosysUnmappedCells | `mosaic_block_a.sv` — explicit `bufz_4` |
+| 27 | **PDN core ring on Metal2/Metal3 sits inside the router's own layer range** (`RT_MIN_LAYER: Metal2`, `RT_MAX_LAYER: Metal5`). Every detailed-routing violation was a signal-net-to-VDD short on Metal3 at x≈1801 µm — the ring itself. DRT thrashed 3+ h without converging (28 → 56) | CRITICAL | Detailed routing non-convergence | Was `PDN_CORE_RING: false`, which cost IR analysis (`PSM-0069`). Real fix: keep the ring but **omit** `PDN_CORE_{VERTICAL,HORIZONTAL}_LAYER` so it defaults to the M4/M5 strap layers, above the router |
+| 28 | **A fix for bug 22 silently broke `soc_ctrl`.** The `soc.dma: none` branch also drove `ao_peripheral_slv_rsp[DMA_CH0_IDX]`, but `DMA_CH0_IDX` is not an AO peripheral index — it is an 8-bit index into the DMA's *own* channel map (`DMA_ADDR_RULES`) and its value is `0`, i.e. `SOC_CTRL_IDX`. Every `soc_ctrl` register read therefore returned `error=1, rdata=0`: `boot_select`, `boot_address` and `use_spimemio` read back as zero | CRITICAL | `yosys check` — *only after* `ERROR_ON_SYNTH_CHECKS` was turned back on for the signoff config | `ao_peripheral_subsystem.sv.tpl` — `DMA_IDX` alone covers the window |
+| 29 | `soc.ao_rv_timer: false` absorbed `rv_timer_tl_h2d` into an unused signal instead of tying it off. Its only driver (the `reg_to_tlul` bridge) is inside the branch that was removed, leaving 107 bits used-but-undriven — the same signature that exposed 22 and 25 | MEDIUM | `yosys check` | `ao_peripheral_subsystem.sv.tpl` — `assign rv_timer_tl_h2d = '0` |
+| 30 | **`flow/librelane/pdn_cfg.tcl` could never generate a PDN.** Its MOSAIC `sram_grid` appendix calls `define_pdn_grid -macro` without `-cells`, `-instances` or `-default`, so OpenROAD aborts with `[PDN-1028]` — for *any* design that sources the file, macros or not. Broken since `6454c80`; unseen because the experimental configs never set `PDN_CFG` | HIGH | Block A signoff run, step 21 | `-cells {mosaic_sram gf180mcu_fd_ip_sram__.*}` (still unexercised — no macro-bearing config has reached PDN) |
+| 31 | **SERV's ext Wishbone port was tied off, so every data access at or above `0x4000_0000` stalled the hart forever.** `servile.v` feeds `servile_mux` with the DATA bus only, and the mux splits on the top two address bits (`ext = adr[31:30] != 2'b00`); instruction fetch reaches the mem port through servile's arbiter and bypasses the mux entirely. `serv_sci.sv` wired only the mem port and set `.i_wb_ext_ack(1'b0)` under the comment "Extension bus (unused — tie off)" — the comment was the bug. Executing from flash therefore worked while *loading* from it hung with no bus request ever issued. In MOSAIC's map that dead region is FLASH_MEM (XIP, `0x4000_0000`) **and** EXT_SLAVE (`0xF000_0000`) | CRITICAL | UART bring-up firmware, whose `.rodata` string hung; localised with 4 firmware probes + RTL bus/port tracing | `serv_sci.sv` — both Wishbone ports arbitrated onto the one OBI master, `ext_owns_q` routes the response to the issuing port, ext wins ties so a continuously-fetching core cannot starve its own load |
+| 32 | **The flow was measuring against constraints tighter than the PDK's own.** `MAX_TRANSITION_CONSTRAINT` defaulted to 3 ns while every one of the 215 cells declares `max_transition : 4.0`; `MAX_CAPACITANCE_CONSTRAINT` applied a blanket `set_max_capacitance 0.2 pF` to the whole design, **below even the weakest clock buffer's own 0.2394 pF rating**. A `clkbuf_16` driving 0.443 pF was reported as failing while rated for 3.813 pF. Repair then spent buffers, area and wirelength on nets that were never violating | MEDIUM | Chasing 2 889 max-slew / 35 max-cap violations that would not come down | Constrain from the library: `MAX_TRANSITION_CONSTRAINT: 4`, `MAX_CAPACITANCE_CONSTRAINT: null` (per-cell limits). Result: cap 35 → 0, slew 1 815 → 591, utilization 86.2% → 84.4%, wirelength 2.13 m → 1.94 m |
+| 33 | **`RUN_POST_GRT_DESIGN_REPAIR` was false**, so `repair_design` only ever ran on global-placement wire estimates. Nothing repaired slew or cap again after CTS and real routing, which is why violations survived a run that closed timing at every corner | MEDIUM | Post-PnR STA vs the repair logs | `RUN_POST_GRT_DESIGN_REPAIR: true` in `config_blocka_signoff.yaml` |
+| 34 | **The GF180 cell models are not standard-compliant**: 120 specify paths use `ifnone` on EDGE-SENSITIVE arcs, e.g. `ifnone (posedge A1 => (ZN:A1))`. IEEE 1364-2005 §14.2.6 permits `ifnone` only as the default for state-dependent *simple* paths. Two independent simulators reject it — iverilog `sorry: ifnone with an edge-sensitive path is not supported`, CVC `ERROR [1012] ifnone path illegal`. Consequence: **no open-source simulator can do SDF-annotated GLS on GF180 without patching the PDK** | MEDIUM | Building timing-annotated gate-level simulation | Not fixable by us. `tb/gls/mk_cells_cvc.py` writes a compliant local copy (keeps the paths as SDF targets); worth reporting upstream. Timing coverage stays with STA at 9 corners |
+| 35 | **4 081 of 5 587 flip-flops have no reset** (plain `dffq_1`). Harmless in silicon — datapath flops are written before use, and real flops power up to a definite 0/1 — but in gate-level simulation they start X and X-propagation stalls the netlist: the first GLS attempt ran 126 000 cycles with the QSPI pins stuck at `x`. **Verilator hides this by zero-initialising**, which is why no RTL run ever showed it | LOW (sim), open question for silicon | First gate-level simulation | Power-up modelled explicitly: `$deposit` per flop (Icarus) or `+random_2state=<seed>` (CVC). Reset coverage deserves a deliberate review before tapeout |
+
+> **Bugs 22–30 were all found by the physical flow, and none of them could have
+> been caught in simulation.** 22, 23 and 29 are undriven bus responses that only
+> matter if firmware touches a removed peripheral's address window — the
+> liveness firmware never does, so every sim passed. 24–26 are library/mapping
+> facts invisible above the netlist. 27 and 30 only appear once a real PDN exists.
+> The lesson recorded here: run the physical flow early, not at the end.
+>
+> **28 is the uncomfortable one.** It was introduced *by* the fix for 22, it sat
+> in the committed Block A GDS, and it was hidden by `ERROR_ON_SYNTH_CHECKS:
+> false` — a flag set to speed up the area loop, carrying a comment that called
+> the remaining 108 problems "pre-existing x-heep artifacts". They were not.
+> The count had been checked; the *contents* had not. Fixing it cost +1.07 %
+> netlist area (831254 → 840151 µm²), which is the read-path logic that had
+> been dead.
 
 ---
 
@@ -415,14 +497,42 @@ built-in `oh-my-soc agent` runtime for API-driven sessions.
 | No storage space for PDK run | MED | MED | Use IIC-OSIC-TOOLS container or remote server |
 | FreeRTOS kernel integration | MED | MED | Bare-metal firmware works end-to-end; FreeRTOS is enhancement |
 | CVA6 area exceeds 1.249 mm² | HIGH | HIGH | Sim-only integration (D-65); excluded from tapeout configs |
+| ~~DRC/LVS never run on the Block A GDS~~ **CLOSED 2026-08-01** | — | — | The signoff run executed every deck with nothing skipped: Magic DRC 0, KLayout DRC 0, Netgen LVS "circuits match uniquely", XOR 0, antenna 0. See D-84 |
+| ~~Block A power delivery unresolved (PSM-0069)~~ **CLOSED 2026-08-01** | — | — | Ring restored on the default M4/M5 layers; 0 power-grid violations on VDD and VSS in the signoff run. See P-08 |
+| ~~Committed Block A GDS predates bug 28~~ **CLOSED 2026-08-01** | — | — | Replaced: the tracked deliverable is now `runs/blocka_signoff/final/`, built from fixed RTL and signed off |
+| ~~LibreLane configs pin ~526 absolute paths into a content-addressed build dir~~ **CLOSED 2026-08-03** | — | — | The committed signoff was reproducible by nobody, and the dangerous failure was never "file not found": a path that still *resolved*, to one of the 14 bundles on the dev machine, would harden stale RTL and report clean results for the wrong design. `scripts/gen_filelist.py` resolves the list from the FuseSoC manifest at run time; a test fails the build if an absolute path reappears. See D-90 |
+| ~~2 889 max-slew / 411 max-fanout / 27 max-cap violations~~ **SUPERSEDED 2026-08-02** | — | — | Post-GRT electrical repair took these to 591 / 1 / 0. What remains is the row below |
+| Block A pin contract not confirmed with the MPW integrator | MED | MED | 22 pins fixed; `bufz_4` QSPI drive is a placeholder pending pad loading; `status_o[6:0]` must be bonded — sole observability with `debug:false` |
+| Routing convergence is placement-sensitive near 82% utilization | MED | MED | One run stalled at 2 violations for 30 passes; a re-seed at 69% util reached 0. Budget a re-spin; do not assume determinism |
+| **591 max-slew violations remain** | MED | CERTAIN | Worst 5.19 ns against the library's 4.0 ns. No deck checks these. Needs per-net work: global knobs are exhausted, and upsizing the QSPI pads was measured to make it worse |
+| GitHub LFS quota (1 GB free tier) | LOW | LOW | Deliverable trimmed to gds/lef/netlist/lib/sdc/odb = 95 MB (~10%); regenerable views gitignored |
 
 ---
 
 ## 9. Next Actions (Priority Order)
 
-1. **Obtain GF180 SRAM bitcell** (P-06) — extract cell1rw.gds/sp from PDK or copy from upstream OpenRAM
-2. **LibreLane pin-binding** (P-01/P-02) — complete `mosaic_soc_core.sv` (`x_heep_system` instantiation) and the pad map
-3. **Generate SRAM macros** (P-03) — run OpenRAM with the GF180 PDK to produce 4KB/32KB GDS/LEF/LIB
-4. **DRC/LVS signoff + STA** (N-06/N-07) — full LibreLane flow with the GF180 PDK, 50 MHz closure
-5. **Scheduling demo in full-SoC sim** — run `mosaic_demo.hex` through the `run_fw.sh` flow (currently build-verified only)
-6. **Decide on the next-gen generator roadmap** — review the proposition in `docs/general_multicore_soc_generator_roadmap.md` (D-77) and accept/defer/reject as a team
+1. **Close the residual 591 max-slew violations** — worst 5.19 ns against the library's
+   4.0 ns. Max-cap (0) and max-fanout (1) are done. What is left needs per-net attention:
+   the global levers are spent, and two of them were measured to *hurt* (`CTS_MAX_CAP: 0.15`
+   made cap worse; `bufz_8` QSPI pads made slew worse).
+2. ~~Repair the electrical rule violations~~ — largely done, see above.
+   No DRC or LVS deck looks at these and setup/hold closing does not imply them. At
+   `CLOCK_PERIOD: 100` the resizer has ~21 ns of slack and therefore no timing pressure to
+   fix transitions; `MAX_TRANSITION_CONSTRAINT` / `DESIGN_REPAIR_*` are the knobs. This is
+   the last known gap between the current macro and a tapeout-ready one.
+   *(DRC + LVS themselves are done — all decks clean, 2026-08-01.)*
+2. ~~**Resolve Block A power delivery**~~ — **done.** The ring is back on Metal4/Metal5 by
+   omitting `PDN_CORE_{VERTICAL,HORIZONTAL}_LAYER`; the signoff run reports `PSM-0040` on
+   both nets and 0 power-grid violations. Superseded by: **re-generate the committed
+   `runs/blocka/final/` artifacts** — done, replaced by `runs/blocka_signoff/final/`.
+3. **Confirm the Block A pin contract with the MPW integrator** — 22 pins, `bufz_4` drive on
+   the QSPI pads is a placeholder, and `status_o[6:0]` must be bonded (it is the only
+   observability with `debug: false`).
+4. **Obtain GF180 SRAM bitcell** (P-06) — extract cell1rw.gds/sp from PDK or copy from upstream OpenRAM.
+   *Note: measured evidence says the GF180 SRAM macros are area-NEGATIVE below ~512 B —
+   4× sram64x8 costs 0.402 mm² vs 0.252 mm² of flip-flops for 256 B (area study §8f).*
+5. **LibreLane pin-binding for the chip-level flow** (P-01/P-02) — `mosaic_soc_core.sv` is
+   still a stub. *Not required for the MPW Block A path, which ships a macro, not a chip.*
+6. **Generate SRAM macros** (P-03) — run OpenRAM with the GF180 PDK to produce 4KB/32KB GDS/LEF/LIB
+7. **Scheduling demo in full-SoC sim** — run `mosaic_demo.hex` through the `run_fw.sh` flow (currently build-verified only)
+8. **Decide on the next-gen generator roadmap** — review the proposition in `docs/general_multicore_soc_generator_roadmap.md` (D-77) and accept/defer/reject as a team

@@ -27,6 +27,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "target": "rtl",
         "cores": [],
         "memory": {"sram_kb": 32, "boot_rom_kb": 2},
+        "dma": "idma",
         "bus": "obi",
         "scheduler": {"tdu": False, "mode": "static"},
         "peripherals": [],
@@ -61,21 +62,61 @@ CORE_DEFAULTS: Dict[str, Dict[str, Any]] = {
 _META_KEYS = {"sim_only"}
 
 # Presets: common SoC configurations
+# The selectable platform blocks a config may switch off. Kept as a literal
+# rather than imported so the harness does not depend on the generator's import
+# path; test_target_capabilities.py checks the two stay in sync.
+VALID_PLATFORM_KEYS = frozenset({
+    "dma", "debug", "plic", "spi_mode",
+    "multicore_timer", "gpio_ao", "ao_rv_timer", "ao_fast_intr",
+})
+
 PRESETS: Dict[str, Dict[str, Any]] = {
     "poc": {
         "soc": {
             "name": "mosaic_poc_alpha",
             "pdk": "gf180mcu",
-            "target": "tapeout",
+            # NOT 'tapeout'. The PoC is the RTL/simulation reference topology;
+            # the qualified physical part is the 'blocka' preset below, which
+            # is the one with DRC/LVS evidence behind it.
+            "target": "rtl",
             "cores": [
                 {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
                 {"ip": "fazyrv", "isa": "rv32i", "chunksize": 8, "count": 2, "role": "atlas", "boot_addr": 0x1000},
                 {"ip": "serv", "isa": "rv32i", "count": 4, "role": "nano", "boot_addr": 0x2000},
             ],
             "memory": {"sram_kb": 32, "boot_rom_kb": 2},
-            "bus": "obi",
+            "dma": "idma",
+        "bus": "obi",
             "scheduler": {"tdu": True, "mode": "dynamic"},
             "peripherals": ["uart", "gpio", "timer", "spi"],
+        }
+    },
+    # The frozen Chipathon Block A part. Mirrors configs/mosaic_tapeout_ultra.yaml;
+    # docs/rtl_freeze_blocka.md is the evidence. Kept in sync by
+    # test_target_capabilities.py, which validates it against the tapeout gate.
+    "blocka": {
+        "soc": {
+            "name": "mosaic_tapeout_ultra",
+            "pdk": "gf180mcu",
+            "target": "tapeout",
+            "cores": [
+                {"ip": "serv", "isa": "rv32ic", "count": 1, "role": "titan",
+                 "with_csr": 1, "compressed": 1},
+                {"ip": "serv", "isa": "rv32i", "count": 1, "role": "atlas",
+                 "boot_addr": 0x40010000, "with_csr": 0},
+            ],
+            "memory": {"sram_kb": 0, "scratchpad_bytes": 128, "boot_rom_kb": 1},
+            "dma": "none",
+            "debug": False,
+            "plic": False,
+            "spi_mode": "xip_only",
+            "multicore_timer": False,
+            "gpio_ao": False,
+            "ao_rv_timer": False,
+            "ao_fast_intr": False,
+            "bus": "obi",
+            "scheduler": {"tdu": True, "mode": "dynamic"},
+            "peripherals": ["uart"],
         }
     },
     "minimal": {
@@ -88,7 +129,8 @@ PRESETS: Dict[str, Dict[str, Any]] = {
                 {"ip": "serv", "isa": "rv32i", "count": 1, "role": "nano", "boot_addr": 0x800},
             ],
             "memory": {"sram_kb": 8, "boot_rom_kb": 1},
-            "bus": "obi",
+            "dma": "idma",
+        "bus": "obi",
             "scheduler": {"tdu": True, "mode": "static"},
             "peripherals": ["uart"],
         }
@@ -106,7 +148,8 @@ PRESETS: Dict[str, Dict[str, Any]] = {
                 {"ip": "serv", "isa": "rv32i", "count": 4, "role": "nano", "boot_addr": 0x4000},
             ],
             "memory": {"sram_kb": 64, "boot_rom_kb": 2},
-            "bus": "obi",
+            "dma": "idma",
+        "bus": "obi",
             "scheduler": {"tdu": True, "mode": "power-aware"},
             "peripherals": ["uart", "gpio", "timer", "spi"],
         }
@@ -126,7 +169,8 @@ PRESETS: Dict[str, Dict[str, Any]] = {
                  "boot_addr": 0x2000},
             ],
             "memory": {"sram_kb": 32, "boot_rom_kb": 2},
-            "bus": "obi",
+            "dma": "idma",
+        "bus": "obi",
             "scheduler": {"tdu": True, "mode": "dynamic"},
             "peripherals": ["uart", "gpio", "timer", "spi"],
         }
@@ -145,7 +189,8 @@ PRESETS: Dict[str, Dict[str, Any]] = {
                  "boot_addr": 0x2000},
             ],
             "memory": {"sram_kb": 32, "boot_rom_kb": 2},
-            "bus": "obi",
+            "dma": "idma",
+        "bus": "obi",
             "scheduler": {"tdu": True, "mode": "dynamic"},
             "peripherals": ["uart", "gpio", "timer", "spi"],
         }
@@ -154,7 +199,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
 
 # Only the canonical 32-KiB GF180/OBI PoC is within the currently qualified
 # implementation matrix.  The other presets remain useful RTL generators.
-TAPEOUT_PRESETS = {"poc"}
+TAPEOUT_PRESETS = {"blocka"}
 
 
 class ConfigAuthor:
@@ -184,6 +229,7 @@ class ConfigAuthor:
         sram_kb: int = 32,
         boot_rom_kb: int = 2,
         bus: str = "obi",
+        dma: str = "idma",
         tdu: bool = False,
         sched_mode: str = "static",
         peripherals: Optional[List[str]] = None,
@@ -191,6 +237,8 @@ class ConfigAuthor:
         target: str = "rtl",
         preset: Optional[str] = None,
         output_path: Optional[Path] = None,
+        scratchpad_bytes: Optional[int] = None,
+        platform: Optional[Dict[str, Any]] = None,
     ) -> SkillResult:
         """Generate a mosaic.yaml from parameters.
 
@@ -200,6 +248,8 @@ class ConfigAuthor:
             sram_kb: SRAM size in KB.
             boot_rom_kb: Boot ROM size in KB.
             bus: Bus type (obi/log/floonoc).
+            dma: DMA engine (idma/none). "none" omits the engine and its
+                crossbar masters; only correct if nothing issues bulk copies.
             tdu: Enable Task Dispatch Unit.
             sched_mode: Scheduling mode (static/dynamic/power-aware).
             peripherals: List of peripheral names.
@@ -237,11 +287,29 @@ class ConfigAuthor:
                     "target": target,
                     "cores": [],
                     "memory": {"sram_kb": sram_kb, "boot_rom_kb": boot_rom_kb},
+                    "dma": dma,
                     "bus": bus,
                     "scheduler": {"tdu": tdu, "mode": sched_mode},
                     "peripherals": peripherals or [],
                 }
             }
+
+            # A part with no SRAM pool needs its scratchpad stated: that is
+            # where the shared-control window and any stack live.
+            if scratchpad_bytes is not None:
+                cfg["soc"]["memory"]["scratchpad_bytes"] = scratchpad_bytes
+
+            # Selectable platform blocks (soc.debug/plic/spi_mode/...). Only
+            # emitted when asked for, so configs that do not care keep the
+            # generator's defaults rather than gaining a wall of `true`s.
+            for key, value in (platform or {}).items():
+                if key not in VALID_PLATFORM_KEYS:
+                    return SkillResult(
+                        ok=False, skill="config-author",
+                        summary=f"unknown platform key {key!r}",
+                        errors=[f"valid platform keys: {sorted(VALID_PLATFORM_KEYS)}"],
+                    )
+                cfg["soc"][key] = value
 
             # Fill core defaults
             next_worker_boot = 0x1000

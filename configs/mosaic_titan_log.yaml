@@ -33,6 +33,8 @@ soc:
     sram_kb: 32
     boot_rom_kb: 2
 
+  dma: idma
+
   bus: log               # two-tier: LIC over banked SRAM + varlat periph tier
   bus_opts:
     log:

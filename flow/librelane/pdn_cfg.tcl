@@ -193,16 +193,25 @@ add_pdn_connect \
     -grid macro \
     -layers "$::env(PDN_VERTICAL_LAYER) $::env(PDN_HORIZONTAL_LAYER)"
 
-# SRAM macro PDN grid — connects OpenRAM-generated SRAM power pins
-# to the core power grid. The SRAM macro has VDD/VSS pins on Metal1;
-# the halo region around the macro provides the connection to the
-# core's Metal2/Metal3 straps.
+# SRAM macro PDN grid — connects SRAM power pins to the core power grid.
+# The SRAM macro has VDD/VSS pins on Metal1; the halo region around the macro
+# provides the connection to the core's Metal2/Metal3 straps.
 #
-# This block activates when a macro named "mosaic_sram" is present
-# in the design (from config.yaml MACROS section).
+# -cells is REQUIRED. Without one of -cells/-instances/-default, OpenROAD
+# rejects the grid outright ("[PDN-1028] Either -instances, -cells, or -default
+# must be specified") and GeneratePDN fails for every design that sources this
+# file, macros or not. The patterns cover the OpenRAM-style macro named in
+# config.yaml's MACROS section and the GF180 IP cuts bound by
+# hw/asic/gf180/sram_wrapper.sv. The -default "macro" grid above still catches
+# any macro these patterns miss.
+#
+# NOT YET EXERCISED: no macro-bearing config has reached PDN since this was
+# fixed. Block A carries no macros at all, so a clean PDN there says nothing
+# about this block.
 define_pdn_grid \
     -macro \
     -name sram_grid \
+    -cells {mosaic_sram gf180mcu_fd_ip_sram__.*} \
     -starts_with POWER \
     -halo "$::env(PDN_HORIZONTAL_HALO) $::env(PDN_VERTICAL_HALO)"
 

@@ -25,6 +25,8 @@ from memory_ss.memory_ss import MemorySS
 try:
     from .core_registry import (
         CORE_SPECS,
+        FLASH_XIP_BASE,
+        FLASH_XIP_SIZE,
         SCI_CORES,
         resolved_capabilities,
         VALID_BUS,
@@ -35,6 +37,8 @@ try:
 except ImportError:  # mcu_gen adds util/xheep_gen directly to sys.path
     from core_registry import (
         CORE_SPECS,
+        FLASH_XIP_BASE,
+        FLASH_XIP_SIZE,
         SCI_CORES,
         resolved_capabilities,
         VALID_BUS,
@@ -66,6 +70,14 @@ class MemoryConfig:
 
     sram_kb: int = 32
     boot_rom_kb: int = 2
+    # External-memory profile (sram_kb == 0): {"base": int, "size_kb": int}
+    # describing off-chip memory on the external-slave window. See
+    # core_registry.EXT_SLAVE_BASE.
+    external: Optional[Dict[str, Any]] = None
+    # Sub-KiB on-chip writable scratchpad (Option C). Data only -- code XIPs
+    # from flash. Exists because sram_kb is integer KiB and the sizes that
+    # matter here (64/128/256/512 B) are below 1 KiB.
+    scratchpad_bytes: Optional[int] = None
 
 
 @dataclass
@@ -109,6 +121,23 @@ class MosaicConfig:
     bus_opts: Dict[str, Any] = field(default_factory=dict)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     peripherals: List[str] = field(default_factory=list)
+    # DMA engine: "idma" (default), "xheep" (simple DMA), or "none".
+    dma: str = "idma"
+    # Debug subsystem (JTAG DTM + RISC-V debug module) and PLIC. Both default
+    # to present. See core_registry.validate_soc_config for what dropping each
+    # one actually costs the design.
+    debug: bool = True
+    plic: bool = True
+    # "full" or "xip_only" -- see core_registry.VALID_SPI_MODE.
+    spi_mode: str = "full"
+    # Force-include rv_timer on multi-core configs (x-heep's historical
+    # behaviour). False drops it; mosaic_clint still serves per-hart timer and
+    # software interrupts.
+    multicore_timer: bool = True
+    # Always-on peripherals that are pure area when a design does not use them.
+    gpio_ao: bool = True
+    ao_rv_timer: bool = True     # mosaic_clint still serves per-hart timers
+    ao_fast_intr: bool = True
 
     # Derived fields (set during build())
     total_cores: int = 0
@@ -272,8 +301,18 @@ def parse_yaml(path: PurePath) -> MosaicConfig:
     mem_raw = soc.get("memory", {})
     cfg.memory.sram_kb = mem_raw.get("sram_kb", 32)
     cfg.memory.boot_rom_kb = mem_raw.get("boot_rom_kb", 2)
+    cfg.memory.external = mem_raw.get("external")
+    cfg.memory.scratchpad_bytes = mem_raw.get("scratchpad_bytes")
 
     # ── soc.bus ──
+    cfg.dma = soc.get("dma", "idma")
+    cfg.debug = soc.get("debug", True)
+    cfg.plic = soc.get("plic", True)
+    cfg.spi_mode = soc.get("spi_mode", "full")
+    cfg.multicore_timer = soc.get("multicore_timer", True)
+    cfg.gpio_ao = soc.get("gpio_ao", True)
+    cfg.ao_rv_timer = soc.get("ao_rv_timer", True)
+    cfg.ao_fast_intr = soc.get("ao_fast_intr", True)
     cfg.bus = soc.get("bus", "obi")
     if cfg.bus not in VALID_BUS_TYPES:
         raise RuntimeError(
@@ -499,6 +538,11 @@ def mosaic_to_xheep_kwargs(
     system.add_extension("soc_profile", cfg.profile)
     system.add_extension("implementation_target", cfg.target)
     system.add_extension("tdu_enabled", cfg.scheduler.tdu)
+    system.add_extension("debug_enabled", cfg.debug)
+    system.add_extension("plic_enabled", cfg.plic)
+    system.add_extension("spi_mode", cfg.spi_mode)
+    system.add_extension("ao_rv_timer", cfg.ao_rv_timer)
+    system.add_extension("ao_fast_intr", cfg.ao_fast_intr)
     system.add_extension("sched_mode", cfg.scheduler.mode)
     system.add_extension("sched_mode_value", cfg.scheduler.mode_value)
     system.add_extension("resolved_harts", tuple(cfg.harts))
@@ -538,10 +582,36 @@ def mosaic_to_xheep_kwargs(
     }
     interrupts = {**config["interrupts"]["list"], **ext_int_list}
 
+    # Stack + heap must fit the writable memory the design actually has. In the
+    # external-memory profile that is the declared off-chip region, not the
+    # (zero) on-chip bank pool.
     if (
-        int(stack_size, 16) + int(heap_size, 16)
-    ) > system.memory_ss().ram_size_address():
-        raise RuntimeError("[MOSAIC] stack + heap exceeds RAM size of the base config")
+        cfg.memory.sram_kb == 0
+        and not cfg.memory.external
+        and not cfg.memory.scratchpad_bytes
+    ):
+        # XIP-only: no writable memory exists anywhere, so a non-zero stack or
+        # heap is not merely too big -- it has no backing store at all.
+        if int(stack_size, 16) or int(heap_size, 16):
+            raise RuntimeError(
+                "[MOSAIC] the XIP-only profile (memory.sram_kb: 0 with no "
+                "memory.external) has no writable memory, so stack and heap "
+                f"must both be 0; got stack=0x{int(stack_size, 16):x} "
+                f"heap=0x{int(heap_size, 16):x}"
+            )
+        writable_bytes = 0
+        writable_what = "writable memory (there is none in the XIP-only profile)"
+    elif cfg.memory.sram_kb == 0:
+        # Writable memory is the scratchpad plus any external region.
+        _ext = cfg.memory.external or {}
+        writable_bytes = int(_ext.get("size_kb", 0)) * 1024
+        writable_bytes += int(cfg.memory.scratchpad_bytes or 0)
+        writable_what = "memory.scratchpad_bytes + memory.external"
+    else:
+        writable_bytes = system.memory_ss().ram_size_address()
+        writable_what = "RAM size of the base config"
+    if (int(stack_size, 16) + int(heap_size, 16)) > writable_bytes:
+        raise RuntimeError(f"[MOSAIC] stack + heap exceeds {writable_what}")
 
     # ── 8. Render kwargs (matching mcu_gen.py's generate_xheep output) ──
     kwargs = {
@@ -577,23 +647,114 @@ def _resolve_base_config(config: dict, cfg: "MosaicConfig") -> dict:
 
     config = copy.deepcopy(config)
     sram_kb = cfg.memory.sram_kb
-    # MemorySS supports at most 16 banks and requires power-of-two bank sizes.
-    # Split larger memories into 32 KiB banks; smaller memories use one bank.
-    bank_size_kb = min(32, sram_kb)
-    bank_sizes = [bank_size_kb] * (sram_kb // bank_size_kb)
-    config["ram_banks"] = {"code_and_data": {"sizes": bank_sizes}}
+    if sram_kb == 0 and cfg.memory.scratchpad_bytes:
+        # Minimal-scratchpad profile (Option C). One small on-chip RAM holding
+        # only writable data -- stack, .data, .bss -- while code executes in
+        # place from the flash window.
+        #
+        # Sized in BYTES because the sizes that matter (64/128/256/512 B) are
+        # below 1 KiB and rounding up would double the macro area
+        # (0.209 -> 0.419 mm2 for 512 B). `sizes_bytes` routes through
+        # MemorySS.add_ram_bank_bytes; memory_subsystem.sv.tpl needs no special
+        # case, since it derives the address width from bank.size() and passes
+        # size()//4 as NumWords.
+        #
+        # The `code` section is the flash window, which is NOT in the RAM
+        # banks and sits at a higher address than the scratchpad. MemorySS
+        # allows that: its code-before-data ordering rule and bank-coverage
+        # check apply only to sections that live on-chip.
+        scratch = int(cfg.memory.scratchpad_bytes)
+        config["ram_banks"] = {"code_and_data": {"sizes_bytes": scratch}}
+        config["linker_sections"] = [
+            {"name": "code", "start": FLASH_XIP_BASE, "size": FLASH_XIP_SIZE - 0x1000},
+            {"name": "data", "start": 0, "size": scratch},
+        ]
+        ls = config.setdefault("linker_script", {})
+        # Per-hart stack sizing is done by software_gen._image_linker, which
+        # caps the stride to the writable region. This value only feeds the
+        # legacy single-image linker.
+        ls["stack_size"] = hex(max(0x20, scratch // 4))
+        ls["heap_size"] = "0x0"
 
-    code_size = min(0xE800, sram_kb * 1024 // 2)
-    config["linker_sections"] = [
-        {"name": "code", "start": 0, "size": code_size},
-        {"name": "data", "start": code_size},
-    ]
+    elif sram_kb == 0:
+        # No on-chip banks at all. `ram_banks` stays present but empty --
+        # load_cfg_hjson requires the key, and load_ram_config simply iterates
+        # nothing -- while the linker sections are declared explicitly rather
+        # than derived from banks.
+        config["ram_banks"] = {}
+        external = cfg.memory.external or {}
+        if external:
+            # Option C with external RAM: code XIPs from flash, the off-chip
+            # region carries writable data only.
+            raw_base = external.get("base", 0xF000_0000)
+            base = raw_base if type(raw_base) is int else int(raw_base, 0)
+            size = int(external.get("size_kb", 64)) * 1024
+            code_size = min(0xE800, size // 2)
+            config["linker_sections"] = [
+                {"name": "code", "start": base, "size": code_size},
+                {"name": "data", "start": base + code_size, "size": size - code_size},
+            ]
+        else:
+            # XIP-only bring-up: everything lives in the read-only flash window
+            # and nothing is writable. `data` still has to exist because
+            # MemorySS.validate requires code and data as the first two
+            # sections, but no hart may write to it -- there is no store
+            # behind it. Stack and heap are forced to zero below.
+            base = FLASH_XIP_BASE
+            size = FLASH_XIP_SIZE
+            code_size = size - 0x1000
+            config["linker_sections"] = [
+                {"name": "code", "start": base, "size": code_size},
+                {"name": "data", "start": base + code_size, "size": 0x1000},
+            ]
+            ls = config.setdefault("linker_script", {})
+            ls["stack_size"] = "0x0"
+            ls["heap_size"] = "0x0"
+    else:
+        # MemorySS supports at most 16 banks and requires power-of-two bank
+        # sizes. Split larger memories into 32 KiB banks; smaller memories use
+        # one bank.
+        bank_size_kb = min(32, sram_kb)
+        bank_sizes = [bank_size_kb] * (sram_kb // bank_size_kb)
+        config["ram_banks"] = {"code_and_data": {"sizes": bank_sizes}}
+
+        code_size = min(0xE800, sram_kb * 1024 // 2)
+        config["linker_sections"] = [
+            {"name": "code", "start": 0, "size": code_size},
+            {"name": "data", "start": code_size},
+        ]
+
+    # ── DMA engine selection (soc.dma) ────────────────────────────────
+    # `none` sets is_included: "no", which ao_peripheral_subsystem.sv.tpl
+    # already honours -- it skips the instantiation entirely, removing the
+    # engine (0.319 mm2 of iDMA in GF180). It does NOT shrink the crossbar:
+    # core_v_mini_mcu_pkg.sv.tpl computes SYSTEM_XBAR_NMASTER from
+    # get_num_master_ports() without consulting is_included, so the stubbed
+    # DMA's master slots survive as two unused ports. See
+    # test_dma_selection.py for why the two are changed together or not at all.
+    #
+    # `idma` and `xheep` both resolve to is_included: "yes"; which engine is
+    # instantiated is still keyed off is_mc in the template, so `xheep` on a
+    # multi-core config does not yet select the simple DMA (see docs).
+    dma_cfg = config["ao_peripherals"].get("dma")
+    if dma_cfg is not None:
+        if cfg.dma == "none":
+            dma_cfg["is_included"] = "no"
+        else:
+            dma_cfg["is_included"] = "yes"
+
+    gpio_ao_cfg = config["ao_peripherals"].get("gpio_ao")
+    if gpio_ao_cfg is not None:
+        gpio_ao_cfg["is_included"] = "yes" if cfg.gpio_ao else "no"
 
     bootrom = config["ao_peripherals"]["bootrom"]
     bootrom["length"] = f"0x{cfg.memory.boot_rom_kb * 1024:08x}"
 
     selected = expanded_user_peripherals(
-        cfg.peripherals, multicore=cfg.total_cores > 1
+        cfg.peripherals,
+        multicore=cfg.total_cores > 1,
+        plic=cfg.plic,
+        multicore_timer=cfg.multicore_timer,
     )
     for name, peripheral in config["peripherals"].items():
         if name in {"address", "length"}:

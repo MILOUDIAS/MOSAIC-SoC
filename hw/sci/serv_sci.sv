@@ -47,13 +47,35 @@ module serv_sci #(
 );
 
     // ── servile Wishbone Lite signals ────────────────────────────
-    logic [31:0] wb_adr;
-    logic [31:0] wb_dat_o;   // write data from core
-    logic [31:0] wb_dat_i;   // read data to core
-    logic [3:0]  wb_sel;
-    logic        wb_we;
-    logic        wb_stb;
-    logic        wb_ack;
+    //
+    // servile exposes TWO Wishbone ports, and both must be served (bug 31).
+    // servile.v feeds servile_mux with the DATA bus only, and the mux splits
+    // it on the top two address bits:
+    //
+    //     servile_mux.v:  wire ext = (i_wb_cpu_adr[31:30] != 2'b00);
+    //
+    // so data accesses below 0x4000_0000 leave on the "mem" port while
+    // anything at or above it leaves on the "ext" port. Instruction fetch does
+    // NOT go through the mux -- it reaches the mem port through servile's
+    // arbiter -- which is why executing from flash always worked while loading
+    // from it did not: this wrapper used to tie i_wb_ext_ack to 1'b0, so a data
+    // access to the flash XIP window at 0x4000_0000 asserted a strobe on a port
+    // that could never acknowledge, and the hart stalled forever with no bus
+    // request ever issued.
+    //
+    // In MOSAIC's map that dead region is not obscure: FLASH_MEM (XIP) is at
+    // 0x4000_0000 and EXT_SLAVE at 0xF000_0000. On a part with sram_kb: 0 all
+    // read-only data lives in flash, so this took out every string, table and
+    // constant a worker might load.
+    //
+    // Both ports are therefore arbitrated onto the single OBI master below.
+    logic [31:0] wb_mem_adr, wb_ext_adr;
+    logic [31:0] wb_mem_dat_o, wb_ext_dat_o;  // write data from core
+    logic [31:0] wb_rdt;                      // read data to core (shared)
+    logic [3:0]  wb_mem_sel, wb_ext_sel;
+    logic        wb_mem_we, wb_ext_we;
+    logic        wb_mem_stb, wb_ext_stb;
+    logic        wb_mem_ack, wb_ext_ack;
 
     // ── servile RF signals ────────────────────────────────────────
     localparam int unsigned RfWidth = W * 2;
@@ -99,23 +121,26 @@ module serv_sci #(
         // SERV only has a timer IRQ (no external/software in standard mode)
         .i_timer_irq (irq_i[7]),
 
-        // Wishbone Lite memory bus (unified I+D via internal arbiter)
-        .o_wb_mem_adr(wb_adr),
-        .o_wb_mem_dat(wb_dat_o),
-        .o_wb_mem_sel(wb_sel),
-        .o_wb_mem_we (wb_we),
-        .o_wb_mem_stb(wb_stb),
-        .i_wb_mem_rdt(wb_dat_i),
-        .i_wb_mem_ack(wb_ack),
+        // Wishbone Lite memory bus: instruction fetch (via servile's arbiter)
+        // plus data accesses below 0x4000_0000.
+        .o_wb_mem_adr(wb_mem_adr),
+        .o_wb_mem_dat(wb_mem_dat_o),
+        .o_wb_mem_sel(wb_mem_sel),
+        .o_wb_mem_we (wb_mem_we),
+        .o_wb_mem_stb(wb_mem_stb),
+        .i_wb_mem_rdt(wb_rdt),
+        .i_wb_mem_ack(wb_mem_ack),
 
-        // Extension bus (unused — tie off)
-        .o_wb_ext_adr(),
-        .o_wb_ext_dat(),
-        .o_wb_ext_sel(),
-        .o_wb_ext_we (),
-        .o_wb_ext_stb(),
-        .i_wb_ext_rdt('0),
-        .i_wb_ext_ack(1'b0),
+        // Extension bus: data accesses at or above 0x4000_0000 -- the flash
+        // XIP window and the external-slave window. Arbitrated onto the same
+        // OBI master below; tying its ack off is bug 31.
+        .o_wb_ext_adr(wb_ext_adr),
+        .o_wb_ext_dat(wb_ext_dat_o),
+        .o_wb_ext_sel(wb_ext_sel),
+        .o_wb_ext_we (wb_ext_we),
+        .o_wb_ext_stb(wb_ext_stb),
+        .i_wb_ext_rdt(wb_rdt),
+        .i_wb_ext_ack(wb_ext_ack),
 
         // Register file interface
         .o_rf_waddr  (rf_waddr),
@@ -143,16 +168,37 @@ module serv_sci #(
       else if (mem_req_o.req && mem_resp_i.gnt) mem_outstanding_q <= 1'b1;
     end
 
+    // Port arbitration. The mem and ext strobes CAN be asserted together (an
+    // instruction fetch on mem while a data access sits on ext), so exactly one
+    // is placed on OBI at a time and the response is routed back to whichever
+    // owns the outstanding transaction.
+    //
+    // ext wins when both ask. Data accesses above 0x4000_0000 are comparatively
+    // rare and always bounded, whereas the instruction stream requests
+    // continuously -- giving mem priority would let a fetch-hungry core starve
+    // its own load indefinitely, which is the failure this fix exists to remove.
+    logic ext_owns_q;
+    wire  pick_ext = wb_ext_stb;
+
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (!rst_ni)                              ext_owns_q <= 1'b0;
+      else if (mem_req_o.req && mem_resp_i.gnt) ext_owns_q <= pick_ext;
+    end
+
     // Gate with fetch_enable_i so a dormant worker stays bus-silent (SERV is
     // held in reset while parked, but mask the strobe too for defense in depth).
-    assign mem_req_o.req       = wb_stb & fetch_enable_i & ~mem_outstanding_q;
-    assign mem_req_o.addr      = wb_adr;
-    assign mem_req_o.we        = wb_we;
-    assign mem_req_o.be        = wb_sel;
-    assign mem_req_o.wdata     = wb_dat_o;
+    assign mem_req_o.req       = (wb_mem_stb | wb_ext_stb) & fetch_enable_i
+                                 & ~mem_outstanding_q;
+    assign mem_req_o.addr      = pick_ext ? wb_ext_adr   : wb_mem_adr;
+    assign mem_req_o.we        = pick_ext ? wb_ext_we    : wb_mem_we;
+    assign mem_req_o.be        = pick_ext ? wb_ext_sel   : wb_mem_sel;
+    assign mem_req_o.wdata     = pick_ext ? wb_ext_dat_o : wb_mem_dat_o;
 
-    assign wb_ack              = mem_resp_i.rvalid;
-    assign wb_dat_i            = mem_resp_i.rdata;
+    // Acknowledge only the port that issued the outstanding request, or a
+    // fetch would consume a load's response.
+    assign wb_mem_ack          = mem_resp_i.rvalid & ~ext_owns_q;
+    assign wb_ext_ack          = mem_resp_i.rvalid &  ext_owns_q;
+    assign wb_rdt              = mem_resp_i.rdata;
 
     // SERV has no native WFI/sleep output. Report "asleep" while the core is
     // held dormant (not yet woken) so the TDU's CORE_STATUS reflects which

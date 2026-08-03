@@ -1,5 +1,19 @@
 # MOSAIC-SoC floorplan + pad map (GF180MCU).
 #
+# ############################################################################
+# NOT THE TAPEOUT TARGET. This is the CHIP-LEVEL path: a standalone die with
+# its own 68-pad ring. The Chipathon 2026 submission is the Block A MACRO --
+# 1117.5 um square, 22 pins, no pad ring, because an MPW block inherits the
+# shared ring from the integrator.
+#
+# The frozen tapeout config is configs/mosaic_tapeout_ultra.yaml and it does
+# NOT read this file. See docs/rtl_freeze_blocka.md.
+#
+# A schematic reviewer correctly flagged the die size here as inconsistent
+# with the declared 22-pin Block A target. The two are different targets;
+# this header is the reconciliation.
+# ############################################################################
+#
 # Starting point: the wafer.space 1x1 MPW die envelope (3932 x 5122 um incl.
 # 26 um sealring per side). Resize CORE_AREA once the placed SoC area is known
 # (PoC target ~1.249 mm2). Pad instance names match the generate labels in

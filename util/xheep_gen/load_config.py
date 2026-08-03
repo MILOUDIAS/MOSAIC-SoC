@@ -135,6 +135,11 @@ def load_ram_config(memory_ss: MemorySS, mem: hjson.OrderedDict):
                 )
 
         elif t == "continuous":
+            # `sizes_bytes` is the sub-KiB scratchpad path: one bank whose size
+            # is given exactly in bytes because integer kiB cannot express it.
+            if "sizes_bytes" in value:
+                memory_ss.add_ram_bank_bytes(int(value["sizes_bytes"]), section_name)
+                continue
             banks: List[int] = []
             ram_list(banks, value)
             memory_ss.add_ram_banks(banks, section_name)

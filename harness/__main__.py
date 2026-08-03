@@ -115,6 +115,7 @@ def cmd_config_author(args):
             sram_kb=args.sram,
             boot_rom_kb=args.boot_rom,
             bus=args.bus,
+            dma=args.dma,
             tdu=args.tdu,
             sched_mode=args.mode,
             peripherals=peripherals,
@@ -557,6 +558,10 @@ def main():
     ca_gen.add_argument("--sram", type=int, default=32, help="SRAM KB")
     ca_gen.add_argument("--boot-rom", type=int, default=2, help="Boot ROM KB")
     ca_gen.add_argument("--bus", choices=("obi", "log", "floonoc"), default="obi")
+    ca_gen.add_argument(
+        "--dma", choices=("idma", "none"), default="idma",
+        help="DMA engine; 'none' omits it entirely (saves 0.355 mm2 in GF180)",
+    )
     ca_gen.add_argument("--pdk", choices=("gf180mcu", "sky130"), default="gf180mcu")
     ca_gen.add_argument(
         "--target", choices=("rtl", "simulation", "tapeout"), default="rtl",

@@ -41,7 +41,7 @@ OBJ="$HERE/obj_dir_fw"
 PY="$REPO/.venv/bin/python"
 [ -x "$PY" ] || PY=python3
 
-echo "### [1/4] generating RTL ($MOSAIC_CFG: 1 TITAN + 2 ATLAS + 4 NANO) ..."
+echo "### [1/4] generating RTL ($MOSAIC_CFG) ..."
 TPLS=$(find . \( -path './build/*' -o -path './hw/vendor/*' ! -path './hw/vendor/xheep' ! -path './hw/vendor/xheep/*' \
     -o -path './util/*' ! -path './util/profile' ! -path './util/profile/*' \
     -o -path './test/*' -o -path './refs/*' \) -prune -o -name '*.tpl' -print)
@@ -98,7 +98,7 @@ echo "### [4/4] running the simulation (production firmware) ..."
 SIM_RC=${PIPESTATUS[0]}
 echo ""
 if [ "$SIM_RC" -eq 0 ] && grep -q "EXIT SUCCESS" "$HERE/sim-fw.log"; then
-  echo "### RESULT: EXIT SUCCESS — production firmware ran on the full 7-hart SoC ✓"
+  echo "### RESULT: EXIT SUCCESS — production firmware ran on $MOSAIC_CFG ✓"
 else
   echo "### RESULT: simulation failed or no EXIT SUCCESS (see $HERE/sim-fw.log)"
   exit 1

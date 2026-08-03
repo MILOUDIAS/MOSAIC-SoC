@@ -20,6 +20,9 @@ from ..core import (
     SkillResult, RunReport, REPO_ROOT, build_subprocess_env, run_cmd,
     load_yaml, log,
 )
+from harness.evidence.gate_guard import gate_error_finding, gate_guard
+from harness.evidence.signoff import parse_signoff
+from harness.evidence.status import EvidenceStatus
 
 # ── Flow definitions ─────────────────────────────────────────────────
 
@@ -65,12 +68,24 @@ FLOWS: Dict[str, Dict[str, Any]] = {
         "cwd": "flow/librelane",
         "description": "LibreLane classic flow (SoC core only)",
         "timeout": 7200,
+        # A hardening run is gated on parsed signoff evidence, never on the
+        # make exit code. Evidence comes from the LibreLane run tree
+        # (runs/<TAG>/final/metrics.csv plus per-step reports), not stdout.
+        # See harness/evidence/librelane.py and roadmap §12.5.
+        "signoff": {"drc": True, "lvs": True, "timing": False, "antenna": False},
+        "runs_dir": "flow/librelane/runs",
+        "report_dir": "flow/librelane/final_classic",
+        "required_evidence": ["signoff_status"],
     },
     "harden-chip": {
         "cmd": ["make", "harden", "SLOT=mosaic"],
         "cwd": "flow/librelane",
         "description": "LibreLane chip flow (full chip + pad ring)",
         "timeout": 14400,
+        "signoff": {"drc": True, "lvs": True, "timing": False, "antenna": False},
+        "runs_dir": "flow/librelane/runs",
+        "report_dir": "flow/librelane/final",
+        "required_evidence": ["signoff_status"],
     },
     "firmware-build": {
         "cmd": ["make"],
@@ -341,7 +356,39 @@ class FlowRunner:
             metrics.update(parsed)
         elif flow_name == "pytest":
             metrics.update(_parse_pytest(combined_output))
-        elif "tb-" in flow_name or "harden" in flow_name:
+        elif spec.get("signoff"):
+            # Hardening flows were previously parsed like cocotb testbenches,
+            # which emit markers LibreLane never produces -- so no gate metric
+            # existed and `ok` fell back to the make exit code. Signoff
+            # evidence is now parsed explicitly and fail-closed.
+            signoff_spec = spec["signoff"]
+            report_dir = (
+                self.repo_root / spec["report_dir"]
+                if spec.get("report_dir") else None
+            )
+            runs_dir = (
+                self.repo_root / spec["runs_dir"]
+                if spec.get("runs_dir") else None
+            )
+            gate = gate_guard(
+                f"signoff:{flow_name}",
+                parse_signoff,
+                combined_output,
+                report_dir,
+                runs_dir=runs_dir,
+                require_drc=bool(signoff_spec.get("drc")),
+                require_lvs=bool(signoff_spec.get("lvs")),
+                require_timing=bool(signoff_spec.get("timing")),
+                require_antenna=bool(signoff_spec.get("antenna")),
+                classify=lambda ev: ev.status,
+            )
+            if gate.errored:
+                metrics["signoff_status"] = EvidenceStatus.INFRASTRUCTURE_ERROR.value
+                finding = gate_error_finding(gate.gate, gate.reason, gate.error)
+                errors.append(finding["message"])
+            else:
+                metrics.update(gate.value.as_metrics())
+        elif "tb-" in flow_name:
             metrics.update(_parse_cocotb_result(combined_output))
 
         metrics.update(_parse_make_output(combined_output))
@@ -366,10 +413,35 @@ class FlowRunner:
             ok = ok and bool(metrics["exit_success"])
         if "all_pass" in metrics:
             ok = ok and bool(metrics["all_pass"])
+
+        # Fail-closed evidence gate (roadmap §12.2/§12.5): a flow that declares
+        # required evidence and does not produce it did NOT pass — the
+        # threshold was never evaluated. An exit code is execution evidence,
+        # not qualification evidence.
+        for key in spec.get("required_evidence", ()):
+            if key not in metrics:
+                ok = False
+                message = (
+                    f"flow '{flow_name}' produced no '{key}' evidence; "
+                    "required evidence is missing, so this is not a pass"
+                )
+                errors.append(message)
+                metrics.setdefault(
+                    "evidence_status", EvidenceStatus.INFRASTRUCTURE_ERROR.value
+                )
+        signoff_status = metrics.get("signoff_status")
+        if signoff_status is not None:
+            ok = ok and signoff_status == EvidenceStatus.PASS.value
         summary_parts = [f"Flow '{flow_name}' {'PASS' if ok else 'FAIL'}"]
         summary_parts.append(f"({elapsed:.1f}s, exit={proc.returncode})")
         if metrics.get("all_pass"):
             summary_parts.append("tests=all_pass")
+        if signoff_status is not None:
+            summary_parts.append(f"signoff={signoff_status}")
+            if metrics.get("drc_violations"):
+                summary_parts.append(f"drc={metrics['drc_violations']}")
+            if metrics.get("lvs_match") is False:
+                summary_parts.append("lvs=mismatch")
         if errors:
             summary_parts.append(f"{len(errors)} errors")
 

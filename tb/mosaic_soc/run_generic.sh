@@ -51,6 +51,9 @@ FILELIST="$FW_DIR/soc.f"
 NUM_HARTS="$("$PY" -c \
     'import json,sys; print(len(json.load(open(sys.argv[1]))["harts"]))' \
     "$BOOT_MANIFEST")" || exit 1
+XIP="$("$PY" -c \
+    'import json,sys; d=json.load(open(sys.argv[1])); print(int(bool(d["images"]) and all(i.get("execute_in_place") for i in d["images"])))' \
+    "$BOOT_MANIFEST")" || exit 1
 TESTBENCH_BOOTSTRAP="$("$PY" -c \
     'import json,sys; d=json.load(open(sys.argv[1])); print(int(bool(d.get("boot_policy",{}).get("testbench_hart0_bootstrap",False))))' \
     "$BOOT_MANIFEST")" || exit 1
@@ -97,10 +100,20 @@ while read -r IMAGE_ID PRIMARY TL_WINDOW PRIMARY_SHARED FIXED_HART XLEN ABI; do
 done < <("$PY" -c \
   'import json,sys; d=json.load(open(sys.argv[1])); hs={h["hart_id"]:h for h in d["harts"]}; b=bool(d.get("boot_policy",{}).get("testbench_hart0_bootstrap",False)); choose=lambda i: "ilp32e" if set(i.get("abis",[])) <= {"ilp32", "ilp32e"} and "ilp32e" in i.get("abis",[]) else "ilp32" if set(i.get("abis",[])) == {"ilp32"} else "lp64" if set(i.get("abis",[])) == {"lp64"} else ""; free=lambda i: any(hs[h]["role"] == "titan" for h in i["harts"]) or (b and 0 in i["harts"]); shared=lambda i: free(i) and len(i["harts"]) > 1 and not (b and 0 in i["harts"]); good=all(len(i.get("xlens",[]))==1 and bool(choose(i)) for i in d["images"]); [print(i["image_id"], int(free(i)), int(any(hs[h]["ip"] in {"rocket", "boom"} for h in i["harts"])), int(shared(i)), i["harts"][0], i["xlens"][0], choose(i)) for i in d["images"]] if good else None; sys.exit(0 if good else 1)' \
   "$BOOT_MANIFEST") || { echo "generic firmware build failed"; exit 1; }
-"$PY" -c \
-  'import json,sys; from pathlib import Path; d=json.load(open(sys.argv[1])); out=Path(sys.argv[2]); images=[Path(p) for p in sys.argv[3:]]; base=int(d["memory"]["shared_control_base"],0); size=int(d["memory"]["shared_control_size"]); rows=[" ".join(["00"]*min(16,size-off)) for off in range(0,size,16)]; out.write_text("".join(p.read_text() for p in images)+f"\n@{base:08X}\n"+"\n".join(rows)+"\n")' \
-  "$BOOT_MANIFEST" "$FW_DIR/generic.hex" "$FW_DIR"/image_*.hex || exit 1
-echo "    firmware: $FW_DIR/generic.hex ($NUM_HARTS harts, wake mask $WAKE_MASK)"
+if [ "$XIP" = "1" ]; then
+  # Execute-in-place: images are linked at flash addresses and nothing is
+  # staged into RAM, so the flash image is the images themselves rebased to
+  # flash offsets. The shared-control window lives in the on-chip scratchpad
+  # and is zeroed by reset, not preloaded.
+  "$PY" "$HERE/pack_xip_hex.py" --manifest "$BOOT_MANIFEST" \
+      --output "$FW_DIR/generic.hex" "$FW_DIR"/image_*.hex || exit 1
+  echo "    flash image: $FW_DIR/generic.hex ($NUM_HARTS harts, wake mask $WAKE_MASK, XIP)"
+else
+  "$PY" -c \
+    'import json,sys; from pathlib import Path; d=json.load(open(sys.argv[1])); out=Path(sys.argv[2]); images=[Path(p) for p in sys.argv[3:]]; base=int(d["memory"]["shared_control_base"],0); size=int(d["memory"]["shared_control_size"]); rows=[" ".join(["00"]*min(16,size-off)) for off in range(0,size,16)]; out.write_text("".join(p.read_text() for p in images)+f"\n@{base:08X}\n"+"\n".join(rows)+"\n")' \
+    "$BOOT_MANIFEST" "$FW_DIR/generic.hex" "$FW_DIR"/image_*.hex || exit 1
+  echo "    firmware: $FW_DIR/generic.hex ($NUM_HARTS harts, wake mask $WAKE_MASK)"
+fi
 
 echo "### [3/4] building the full-SoC Verilator model ..."
 rm -rf "$OBJ"
@@ -114,7 +127,15 @@ verilator --binary -j 0 --top-module tb_top --Mdir "$OBJ" -o Vtb_top \
     || { echo "### BUILD FAILED — see $HERE/build-generic.log"; exit 1; }
 
 echo "### [4/4] running topology-generic liveness firmware ..."
-"$OBJ/Vtb_top" +firmware="$FW_DIR/generic.hex" +boot_sel=0 \
+if [ "$XIP" = "1" ]; then
+  # boot_sel=1 selects flash; execute_from_flash=1 selects the memory-mapped
+  # SPI (spimemio) window the boot ROM enables in _execute_from_flash.
+  BOOT_ARGS="+boot_sel=1 +execute_from_flash=1"
+else
+  BOOT_ARGS="+boot_sel=0"
+fi
+# shellcheck disable=SC2086
+"$OBJ/Vtb_top" +firmware="$FW_DIR/generic.hex" $BOOT_ARGS \
     +maxcycles=2000000 +verbose 2>&1 | tee "$HERE/sim-generic.log" | tail -30
 SIM_RC=${PIPESTATUS[0]}
 if [ "$SIM_RC" -eq 0 ] && grep -q "EXIT SUCCESS" "$HERE/sim-generic.log"; then

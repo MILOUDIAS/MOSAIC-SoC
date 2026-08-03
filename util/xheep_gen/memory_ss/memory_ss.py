@@ -72,6 +72,40 @@ class MemorySS:
         # Add all new banks if no error was raised
         self._ram_banks += banks
 
+    def add_ram_bank_bytes(self, size_bytes: int, section_name: str = ""):
+        """
+        Add one continuous RAM bank sized in BYTES rather than kiB.
+
+        This exists for the MOSAIC sub-KiB scratchpad
+        (``memory.scratchpad_bytes``): integer-kiB sizing cannot express 512 B,
+        and rounding up to 1 KiB would double the macro area while the config
+        still claimed the smaller size. Everything downstream of Bank already
+        works in bytes.
+
+        :param int size_bytes: bank size in bytes; a power of two, >= 4.
+        :param str section_name: if not empty, adds a linker section for it.
+        :raise TypeError: when arguments are of wrong type
+        :raise ValueError: when the size is invalid
+        """
+
+        if self._ignore_ram_continous:
+            return
+
+        if not type(size_bytes) is int:
+            raise TypeError("size_bytes should be of type int")
+        if not type(section_name) is str:
+            raise TypeError("section_name should be of type str")
+
+        bank = Bank(
+            0, self._ram_next_addr, self._ram_next_idx, 0, 0, size_bytes=size_bytes
+        )
+        self._ram_next_addr = bank.end_address()
+        self._ram_next_idx += 1
+
+        if section_name != "":
+            self.add_linker_section_for_banks(section_name, banks=[bank])
+        self._ram_banks += [bank]
+
     def add_ram_banks_il(
         self,
         num: int,
@@ -354,6 +388,20 @@ class MemorySS:
                 )
             old_sec.end = self._ram_banks[-1].end_address()
 
+    def section_in_ram_banks(self, section: LinkerSection) -> bool:
+        """Whether a linker section starts inside one of the RAM banks.
+
+        A section may legitimately live OUTSIDE the banks: under the MOSAIC
+        execute-in-place profiles the `code` section is the SPI-flash window,
+        which is not RAM at all (docs/external_memory_boot_design.md). Rules
+        that only make sense for on-chip memory -- the code-before-data
+        ordering and the bank-coverage check -- are skipped for such sections.
+        """
+        return any(
+            bank.start_address() <= section.start < bank.end_address()
+            for bank in self._ram_banks
+        )
+
     def validate(self, max_banks: int = 16):
         """
         Validates the memory subsystem configuration.
@@ -362,7 +410,15 @@ class MemorySS:
             default is 16; the LOG bus raises it to 32 because the
             logarithmic interconnect needs at least one bank per bus master.
         """
-        if not self.ram_numbanks() in range(1, max_banks + 1):
+        # Zero banks is legal and means the EXTERNAL-MEMORY PROFILE: the SoC
+        # carries no on-chip SRAM macros and code/data live off-chip (see
+        # MOSAIC memory.sram_kb: 0). The linker sections must then be declared
+        # explicitly rather than derived from banks, which the checks below
+        # still enforce -- code and data must exist, be ordered, and not
+        # overlap. Any other bank count keeps the x-heep bounds.
+        if self.ram_numbanks() != 0 and not self.ram_numbanks() in range(
+            1, max_banks + 1
+        ):
             raise RuntimeError(
                 f"[MCU-GEN - MemorySS] ERROR: The number of banks should be between 1 and {max_banks} instead of {self.ram_numbanks()}"
             )  # TODO: clarify upper limit
@@ -379,21 +435,41 @@ class MemorySS:
 
         old_sec: Union[LinkerSection, None] = None
 
+        # Sections are sorted by address, and x-heep's linker template wants
+        # code first and data second. That ordering is only meaningful when
+        # every section is on-chip: with execute-in-place, `code` is the flash
+        # window at a HIGHER address than the RAM, so sorting legitimately puts
+        # data first. Apply the positional rule only when nothing lives outside
+        # the banks, which keeps every on-chip configuration exactly as before.
+        all_sections_on_chip = all(
+            self.section_in_ram_banks(sec) for sec in self._linker_sections
+        )
+
         for i, sec in enumerate(self._linker_sections):
-            if i == 0 and sec.name != "code":
-                raise RuntimeError(
-                    "[MCU-GEN - MemorySS] ERROR: The first linker section should be called code."
-                )
-            elif i == 1 and sec.name != "data":
-                raise RuntimeError(
-                    "[MCU-GEN - MemorySS] ERROR: The second linker section should be called data."
-                )
+            if all_sections_on_chip:
+                if i == 0 and sec.name != "code":
+                    raise RuntimeError(
+                        "[MCU-GEN - MemorySS] ERROR: The first linker section should be called code."
+                    )
+                elif i == 1 and sec.name != "data":
+                    raise RuntimeError(
+                        "[MCU-GEN - MemorySS] ERROR: The second linker section should be called data."
+                    )
 
             if old_sec is not None:
                 if sec.start < old_sec.end:
                     raise RuntimeError(
                         f"[MCU-GEN - MemorySS] ERROR: Section {sec.name} and {old_sec.name} overlap."
                     )
+
+            # A section outside the RAM banks (an execute-in-place `code`
+            # section in the flash window, or anything in the external-memory
+            # profile where there are no banks at all) has nothing on-chip to
+            # be contained in. Overlap is still checked above; coverage is the
+            # bus address map's job, not this function's.
+            if self.ram_numbanks() == 0 or not self.section_in_ram_banks(sec):
+                old_sec = sec
+                continue
 
             start = sec.start
             found_start = False

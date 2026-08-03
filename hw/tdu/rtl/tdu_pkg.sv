@@ -26,7 +26,7 @@ package tdu_pkg;
   localparam logic [31:0] TDU_TASK_PUSH_OFFSET     = 32'h10;  // WO enqueue
   localparam logic [31:0] TDU_TASK_POP_OFFSET      = 32'h14;  // RO dequeue
   localparam logic [31:0] TDU_TASK_STATUS_OFFSET   = 32'h18;  // RO
-  localparam logic [31:0] TDU_ENERGY_COUNTER_OFFSET = 32'h1C; // RO/RC
+  localparam logic [31:0] TDU_ACTIVE_HART_CYCLES_OFFSET = 32'h1C; // RO/RC
   localparam logic [31:0] TDU_CPI_EST_BASE_OFFSET  = 32'h20;  // RW array
   // W1S pulse used by a worker after completing its current descriptor.  The
   // cpu subsystem consumes the pulse to re-park/reset that hart; a later wake

@@ -420,7 +420,15 @@ class AgentState:
     generated_ok: Dict[str, str] = field(default_factory=dict)
     verified_configs: Dict[str, str] = field(default_factory=dict)
     generic_verified_configs: Dict[str, str] = field(default_factory=dict)
-    physical_ok: bool = False
+    # A registered hardening flow completed AND its parsed signoff evidence
+    # passed. flow_runner gates harden-* on signoff_status (DRC + LVS), so
+    # this is stronger than "the command exited zero" -- but it is NOT
+    # qualification: timing is recorded and not gated, and area, power,
+    # antenna, IR/EM and multi-corner closure are not evaluated at all.
+    # Named for exactly what it establishes (roadmap 14.3 asked for
+    # `physical_command_completed`; typed DRC/LVS evidence now exists, so
+    # the honest name is narrower than `physical_ok` and wider than that).
+    physical_drc_lvs_ok: bool = False
     requested_configs: set[str] = field(default_factory=set)
     requested_cores: set[str] = field(default_factory=set)
     requested_config_initial: Dict[str, str] = field(default_factory=dict)
@@ -791,7 +799,7 @@ class AgentState:
                             self.source_digest()
                         )
             elif flow in AgentToolRegistry.PHYSICAL_FLOWS:
-                self.physical_ok = True
+                self.physical_drc_lvs_ok = True
                 physical_config = config or str(self.repo_root / "mosaic.yaml")
                 physical_path, physical_digest = self.fingerprint(physical_config)
                 if physical_digest:
@@ -916,10 +924,11 @@ class AgentState:
             )
             return (
                 None
-                if self.physical_ok
+                if self.physical_drc_lvs_ok
                 and config_ok
                 and self._source_current(self.physical_source_digest)
-                else "no current target-bound approved physical-flow evidence"
+                else "no current target-bound approved physical-flow evidence "
+                "(a hardening run whose DRC and LVS evidence passed)"
             )
         if scope == "integration":
             canonical_unit_runs = (

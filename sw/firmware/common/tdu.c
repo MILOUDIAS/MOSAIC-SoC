@@ -141,18 +141,18 @@ uint32_t tdu_get_cpi_estimate(uint32_t hart) {
     return mmio_region_read32(tdu, offset);
 }
 
-// ── Energy counter ─────────────────────────────────────────────────
+// ── Active-hart-cycles counter (workload proxy, NOT energy) ────────
 
-uint32_t tdu_get_energy_counter(void) {
+uint32_t tdu_get_active_hart_cycles(void) {
     mmio_region_t tdu = tdu_get_region();
     return mmio_region_read32(tdu,
-                              (ptrdiff_t)TDU_ENERGY_COUNTER_REG_OFFSET);
+                              (ptrdiff_t)TDU_ACTIVE_HART_CYCLES_REG_OFFSET);
 }
 
-void tdu_clear_energy_counter(void) {
+void tdu_clear_active_hart_cycles(void) {
     // Writing any value clears the counter (tdu.sv:258).
     mmio_region_t tdu = tdu_get_region();
-    mmio_region_write32(tdu, (ptrdiff_t)TDU_ENERGY_COUNTER_REG_OFFSET, 0u);
+    mmio_region_write32(tdu, (ptrdiff_t)TDU_ACTIVE_HART_CYCLES_REG_OFFSET, 0u);
 }
 
 // ── Convenience: dispatch task + wake ──────────────────────────────

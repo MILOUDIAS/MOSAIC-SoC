@@ -253,3 +253,91 @@ def test_run_writes_config_without_execute(tmp_path):
         p = REPO_ROOT / "configs" / "pytest_prompt_soc.yaml"
         if p.exists():
             p.unlink()
+
+
+# --------------------------------------------------------------------------
+# the Chipathon Block A part, from a prompt
+# --------------------------------------------------------------------------
+
+BLOCK_A_PROMPT = (
+    "a tapeout SoC: one serv titan rv32ic compressed with CSRs, "
+    "one serv atlas rv32i without CSRs boot 0x40010000, "
+    "no sram, 128 byte scratchpad, 1 kb boot rom, no DMA, no debug, no PLIC, "
+    "no multicore timer, no gpio, no rv timer, no fast interrupts, "
+    "XIP from flash, uart only, TDU dynamic"
+)
+
+
+def test_prompt_reproduces_the_frozen_tapeout_config(tmp_path):
+    """The headline claim: the frozen Block A part is reachable from a prompt.
+
+    Not "something like it" -- the same config, field for field. Before the
+    platform-knob grammar existed a prompt could not say "no DMA" at all, so
+    the part that is actually being taped out was the one design the prompt
+    path could not express.
+    """
+    import yaml
+    from harness.skills.soc_from_prompt import SocFromPrompt
+
+    result = SocFromPrompt(repo_root=tmp_path).run(
+        BLOCK_A_PROMPT, name="mosaic_tapeout_ultra"
+    )
+    assert result.ok, result.errors
+
+    generated = yaml.safe_load(
+        open(result.details["config"]["path"])
+    )["soc"]
+    frozen = yaml.safe_load(
+        (REPO_ROOT / "configs" / "mosaic_tapeout_ultra.yaml").read_text()
+    )["soc"]
+
+    differing = {
+        key: (generated.get(key, "<absent>"), frozen.get(key, "<absent>"))
+        for key in set(generated) | set(frozen)
+        if generated.get(key, "<absent>") != frozen.get(key, "<absent>")
+    }
+    assert not differing, f"prompt output diverged from the frozen config: {differing}"
+
+
+def test_prompt_cannot_talk_its_way_past_the_tapeout_gate(tmp_path):
+    """`tapeout` in a prompt is a CLAIM; the capability gate decides.
+
+    Same Block A prompt with the debug module left in. The design is otherwise
+    identical, so nothing but the gate stops it being labelled tapeout-ready.
+    """
+    from harness.skills.soc_from_prompt import SocFromPrompt
+
+    result = SocFromPrompt(repo_root=tmp_path).run(
+        BLOCK_A_PROMPT.replace("no debug, ", ""), name="probe"
+    )
+    assert not result.ok
+    assert any("soc.debug" in e for e in result.errors), result.errors
+
+
+def test_xip_does_not_bring_back_the_spi_host(tmp_path):
+    """"XIP from flash" must not add a `spi` peripheral.
+
+    The flash interface at xip_only is the always-on subsystem reduced to its
+    reader; a `spi` user peripheral is the full OpenTitan host, 0.717 mm2 of it
+    -- exactly what the prompt asked to remove.
+    """
+    from harness.skills.soc_from_prompt import parse_prompt
+
+    intent = parse_prompt(BLOCK_A_PROMPT)
+    assert intent.peripherals == ["uart"], intent.peripherals
+    assert intent.platform["spi_mode"] == "xip_only"
+
+
+def test_platform_denials_do_not_leak_into_peripherals():
+    """"no rv timer" must not contribute a `timer` peripheral."""
+    from harness.skills.soc_from_prompt import parse_prompt
+
+    intent = parse_prompt("one serv titan, no rv timer, no multicore timer, uart")
+    assert "timer" not in intent.peripherals, intent.peripherals
+
+
+def test_no_sram_is_a_profile_not_an_error():
+    """sram_kb 0 is the external-memory-only part, not a typo."""
+    from harness.skills.soc_from_prompt import parse_prompt
+
+    assert parse_prompt("one serv titan, no sram, uart").sram_kb == 0

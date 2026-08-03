@@ -593,7 +593,7 @@ ${",\n".join(cv32e40p_params)}
         ## wrapper's own default (BRAM_DP_BP) so the CSR default is consistent.
         .RFTYPE_STR("${group.params.get('rftype', 'BRAM_DP_BP')}"),
         .RVC_STR("${group.params.get('rvc', 'NONE')}"),
-        .MEMDLY1(${group.params.get('memdly1', 0)}),
+        .MEMDLY1(${int(group.params.get('memdly1', 0))}),
         ## Per-core reset/boot address from the mosaic config (default 0x180).
         ## Lets each woken worker run its own program; int(str(..),0) accepts a
         ## YAML int (0x1000 -> 4096) or a quoted hex string.
@@ -623,10 +623,10 @@ ${",\n".join(cv32e40p_params)}
     // instruction fetch and data access. The instr channel is unused.
     serv_sci #(
         .W(${group.params.get('w', 1)}),
-        .WITH_CSR(${group.params.get('with_csr', 1)}),
-        .COMPRESSED(${group.params.get('compressed', 0)}),
-        .MDU(${group.params.get('mdu', 0)}),
-        .PRE_REGISTER(${group.params.get('pre_register', 0)}),
+        .WITH_CSR(${int(group.params.get('with_csr', 1))}),
+        .COMPRESSED(${int(group.params.get('compressed', 0))}),
+        .MDU(${int(group.params.get('mdu', 0))}),
+        .PRE_REGISTER(${int(group.params.get('pre_register', 0))}),
         ## Per-core reset address from the mosaic config (default 0x180) — lets a
         ## woken worker run its own program (int(str(..),0) accepts int or hex str).
         .RESET_PC(BOOT_ADDR_${g_idx}_${inst})
@@ -657,9 +657,9 @@ ${",\n".join(cv32e40p_params)}
     picorv32_sci #(
         .ENABLE_COUNTERS(${group.params.get('counters', 0)}),
         .BARREL_SHIFTER(${group.params.get('barrel_shifter', 0)}),
-        .COMPRESSED_ISA(${group.params.get('compressed', 0)}),
-        .ENABLE_MUL(${group.params.get('mul', 0)}),
-        .ENABLE_DIV(${group.params.get('div', 0)}),
+        .COMPRESSED_ISA(${int(group.params.get('compressed', 0))}),
+        .ENABLE_MUL(${int(group.params.get('mul', 0))}),
+        .ENABLE_DIV(${int(group.params.get('div', 0))}),
         ## Per-core reset address from the mosaic config (default 0x180) — lets a
         ## woken worker run its own program (int(str(..),0) accepts int or hex str).
         .PROGADDR_RESET(BOOT_ADDR_${g_idx}_${inst})
@@ -811,10 +811,10 @@ ${",\n".join(cv32e40p_params)}
     // Like SERV it presents a single unified OBI port (data channel).
     serv_sci #(
         .W(${group.params.get('w', 4)}),
-        .WITH_CSR(${group.params.get('with_csr', 1)}),
-        .COMPRESSED(${group.params.get('compressed', 0)}),
-        .MDU(${group.params.get('mdu', 0)}),
-        .PRE_REGISTER(${group.params.get('pre_register', 0)}),
+        .WITH_CSR(${int(group.params.get('with_csr', 1))}),
+        .COMPRESSED(${int(group.params.get('compressed', 0))}),
+        .MDU(${int(group.params.get('mdu', 0))}),
+        .PRE_REGISTER(${int(group.params.get('pre_register', 0))}),
         ## Per-core reset address from the mosaic config (default 0x180) — lets a
         ## woken worker run its own program (int(str(..),0) accepts int or hex str).
         .RESET_PC(BOOT_ADDR_${g_idx}_${inst})

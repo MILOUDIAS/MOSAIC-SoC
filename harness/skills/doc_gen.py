@@ -39,7 +39,7 @@ TDU_REGISTERS = {
     "TASK_PUSH": {"offset": "0x10", "access": "WO", "description": "Enqueue task descriptor into FIFO"},
     "TASK_POP": {"offset": "0x14", "access": "RO", "description": "Dequeue task descriptor from FIFO"},
     "TASK_STATUS": {"offset": "0x18", "access": "RO", "description": "FIFO count, full, empty flags"},
-    "ENERGY_COUNTER": {"offset": "0x1C", "access": "RO/RC", "description": "Energy accumulator (active cores x cycles)"},
+    "ACTIVE_HART_CYCLES": {"offset": "0x1C", "access": "RO/RC", "description": "Active-hart-cycles accumulator: sum over time of running harts. Workload proxy, NOT energy — every hart is weighted equally. Saturates at 2^32-1; write to clear"},
     "CPI_EST_BASE": {"offset": "0x20", "access": "RW", "description": "Per-core CPI estimate array"},
 }
 

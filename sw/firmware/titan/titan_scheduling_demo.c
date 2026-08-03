@@ -183,7 +183,7 @@ static uint32_t count_worker_done(uint32_t active_mask) {
  * @return Energy counter value at end of phase.
  */
 static uint32_t phase_static(void) {
-    tdu_clear_energy_counter();
+    tdu_clear_active_hart_cycles();
     tdu_set_sched_mode(TDU_SCHED_STATIC);
     clear_worker_sentinels();
 
@@ -209,7 +209,7 @@ static uint32_t phase_static(void) {
         timeout--;
     }
 
-    return tdu_get_energy_counter();
+    return tdu_get_active_hart_cycles();
 }
 
 /**
@@ -228,7 +228,7 @@ static uint32_t phase_static(void) {
  * @return Energy counter value at end of phase.
  */
 static uint32_t phase_dynamic(void) {
-    tdu_clear_energy_counter();
+    tdu_clear_active_hart_cycles();
     tdu_set_sched_mode(TDU_SCHED_DYNAMIC);
     clear_worker_sentinels();
 
@@ -316,7 +316,7 @@ static uint32_t phase_dynamic(void) {
     scr_w(0x08u, (uint32_t)fast_nano[0]);
     scr_w(0x0Cu, (uint32_t)fast_nano[1]);
 
-    return tdu_get_energy_counter();
+    return tdu_get_active_hart_cycles();
 }
 
 /**
@@ -336,7 +336,7 @@ static uint32_t phase_dynamic(void) {
  * @return Energy counter value at end of phase.
  */
 static uint32_t phase_power_aware(void) {
-    tdu_clear_energy_counter();
+    tdu_clear_active_hart_cycles();
     tdu_set_sched_mode(TDU_SCHED_POWER_AWARE);
     clear_worker_sentinels();
 
@@ -362,13 +362,13 @@ static uint32_t phase_power_aware(void) {
     /* Let all cores run for a calibration period. */
     delay(10000u);
 
-    uint32_t energy_sample = tdu_get_energy_counter();
+    uint32_t activity_sample = tdu_get_active_hart_cycles();
 
     /* Step 2: Decide how many cores to use based on energy. */
     uint8_t active_harts[MOSAIC_NUM_HARTS];
     uint32_t num_active;
 
-    if (energy_sample <= energy_budget) {
+    if (activity_sample <= energy_budget) {
         /* Energy is within budget — use all cores. */
         num_active = MOSAIC_NUM_WORKER_HARTS;
         for (uint32_t i = 0; i < MOSAIC_NUM_WORKER_HARTS; i++) {
@@ -384,7 +384,7 @@ static uint32_t phase_power_aware(void) {
     }
 
     /* Step 3: Reset and re-dispatch with reduced core set. */
-    tdu_clear_energy_counter();
+    tdu_clear_active_hart_cycles();
     clear_worker_sentinels();
 
     /* Update wake mask to only active cores. */
@@ -409,11 +409,11 @@ static uint32_t phase_power_aware(void) {
         timeout--;
     }
 
-    uint32_t final_energy = tdu_get_energy_counter();
+    uint32_t final_energy = tdu_get_active_hart_cycles();
 
     /* Store power-aware results in scratchpad. */
     scr_w(0x10u, energy_budget);
-    scr_w(0x14u, energy_sample);
+    scr_w(0x14u, activity_sample);
     scr_w(0x18u, final_energy);
     scr_w(0x1Cu, num_active);
 

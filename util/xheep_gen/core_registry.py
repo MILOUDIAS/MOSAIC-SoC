@@ -267,37 +267,100 @@ VALID_ISAS = frozenset(isa for spec in CORE_SPECS.values() for isa in spec.isas)
 # targets.  Expanding this matrix requires physical-flow evidence and tests.
 TAPEOUT_PDK = "gf180mcu"
 TAPEOUT_BUS = "obi"
-TAPEOUT_SRAM_KB = 32
-TAPEOUT_BOOT_ROM_KB = 2
+# Block A (see docs/rtl_freeze_blocka.md): no on-chip SRAM pool, a 128 B
+# flip-flop scratchpad, 1 KB boot ROM, code executed XIP from external flash.
+TAPEOUT_SRAM_KB = 0
+TAPEOUT_BOOT_ROM_KB = 1
+TAPEOUT_SCRATCHPAD_BYTES = 128
 MIN_BOOT_IMAGE_BYTES = 0x400
+
+# x-heep's external-slave window, from core_v_mini_mcu.h:
+#   #define EXT_SLAVE_START_ADDRESS 0xF0000000
+#   #define EXT_SLAVE_SIZE          0x01000000
+# The external-memory profile (memory.sram_kb: 0) places off-chip SRAM here.
+EXT_SLAVE_BASE = 0xF000_0000
+EXT_SLAVE_SIZE_KB = 0x0100_0000 // 1024
+
+# The memory-mapped SPI-flash execute-in-place window, from configs/general.hjson
+# `flash_mem` and core_v_mini_mcu.h:
+#   #define FLASH_MEM_START_ADDRESS 0x40000000
+#   #define FLASH_MEM_SIZE          0x01000000
+# Code is read-only and non-volatile, so a reset vector here is valid with no
+# initialisation beyond enabling the window -- which the boot ROM already does
+# in `_execute_from_flash`. This is what lets workers run with no RAM at all.
+FLASH_XIP_BASE = 0x4000_0000
+FLASH_XIP_SIZE = 0x0100_0000
 TAPEOUT_CORE_MATRIX = (
     {
-        "ip": "cv32e20",
-        "isa": "rv32emc",
+        "ip": "serv",
+        "isa": "rv32ic",
         "count": 1,
         "role": "titan",
-    },
-    {
-        "ip": "fazyrv",
-        "isa": "rv32i",
-        "chunksize": 8,
-        "count": 2,
-        "role": "atlas",
-        "boot_addr": 0x1000,
+        "with_csr": 1,
+        "compressed": 1,
     },
     {
         "ip": "serv",
         "isa": "rv32i",
-        "count": 4,
-        "role": "nano",
-        "boot_addr": 0x2000,
+        "count": 1,
+        "role": "atlas",
+        "boot_addr": 0x4001_0000,
+        "with_csr": 0,
     },
 )
-TAPEOUT_PERIPHERALS = frozenset({"uart", "gpio", "timer", "spi"})
+
+# The platform blocks Block A removes. A design carrying any of them has no
+# physical evidence behind it, so it is not the qualified part even if its core
+# list matches.
+# What each knob defaults to when a config omits it -- so an omitted knob is
+# judged on its effective value, not treated as if it matched.
+_TAPEOUT_PLATFORM_DEFAULTS = {
+    "dma": "idma",
+    "debug": True,
+    "plic": True,
+    "spi_mode": "full",
+    "multicore_timer": True,
+    "gpio_ao": True,
+    "ao_rv_timer": True,
+    "ao_fast_intr": True,
+}
+
+TAPEOUT_PLATFORM = {
+    "dma": "none",
+    "debug": False,
+    "plic": False,
+    "spi_mode": "xip_only",
+    "multicore_timer": False,
+    "gpio_ao": False,
+    "ao_rv_timer": False,
+    "ao_fast_intr": False,
+}
+
+TAPEOUT_PERIPHERALS = frozenset({"uart"})
 
 # The public MOSAIC schema fixes iDMA at two streams. Each stream contributes
 # exactly two OBI masters (read and write); the legacy simple-DMA address
 # master is not part of an explicit MOSAIC topology.
+# DMA engine selection (soc.dma).
+#   idma   pulp-platform iDMA: one OBI read/write pair per stream. The default,
+#          and the CLAUDE.md design choice for every explicit topology.
+#   xheep  x-heep's simple DMA: a read/write/addr triplet.
+#   none   no DMA at all. The AO subsystem skips the instantiation entirely
+#          (ao_peripheral_subsystem.sv.tpl guards on get_is_included()), and
+#          num_bus_masters() drops its master ports, so the crossbar shrinks
+#          with it. Measured saving on a 3-core XIP SoC: 0.319 mm2 in GF180,
+#          8.2% of the die -- see docs/area_study_gf180_min_soc.md.
+VALID_DMA = frozenset({"idma", "xheep", "none"})
+
+# SPI subsystem flavour.
+#   full      OpenTitan spi_host + the obi_spimemio XIP reader (x-heep default)
+#   xip_only  obi_spimemio ONLY -- read-only execute-in-place, no SPI host
+# The XIP reader is 0.030 mm2; the whole subsystem with the host is 0.717 mm2,
+# the largest single block in the minimum-area SoC. Dropping the host means the
+# part can still boot and execute from flash but cannot drive SPI as a
+# general-purpose host, and cannot WRITE to the flash.
+VALID_SPI_MODE = frozenset({"full", "xip_only"})
+
 STANDARD_DMA_MASTER_PORTS = 2
 IDMA_OBI_PORTS_PER_STREAM = 2
 MAX_LOG_BANKS = 32
@@ -364,13 +427,19 @@ def target_capability_errors(soc: Mapping[str, Any]) -> List[str]:
         boot_rom_kb = memory.get("boot_rom_kb", 2)
         if sram_kb != TAPEOUT_SRAM_KB:
             errors.append(
-                "soc.target 'tapeout' requires memory.sram_kb=32; "
-                f"{sram_kb!r} has no qualified GF180 macro integration"
+                f"soc.target 'tapeout' requires memory.sram_kb={TAPEOUT_SRAM_KB}; "
+                f"{sram_kb!r} has no qualified GF180 physical configuration"
             )
         if boot_rom_kb != TAPEOUT_BOOT_ROM_KB:
             errors.append(
-                "soc.target 'tapeout' requires memory.boot_rom_kb=2; "
+                f"soc.target 'tapeout' requires memory.boot_rom_kb={TAPEOUT_BOOT_ROM_KB}; "
                 f"{boot_rom_kb!r} has no qualified GF180 physical configuration"
+            )
+        scratchpad = memory.get("scratchpad_bytes", TAPEOUT_SCRATCHPAD_BYTES)
+        if scratchpad != TAPEOUT_SCRATCHPAD_BYTES:
+            errors.append(
+                "soc.target 'tapeout' requires memory.scratchpad_bytes="
+                f"{TAPEOUT_SCRATCHPAD_BYTES}; {scratchpad!r} was not hardened"
             )
 
     cores = soc.get("cores", [])
@@ -393,9 +462,18 @@ def target_capability_errors(soc: Mapping[str, Any]) -> List[str]:
             normalized_cores.append(normalized)
         if normalized_cores != list(TAPEOUT_CORE_MATRIX):
             errors.append(
-                "soc.target 'tapeout' is qualified only for the canonical PoC "
-                "topology (1x cv32e20 TITAN, 2x FazyRV-8 ATLAS at 0x1000, "
-                "4x SERV NANO at 0x2000)"
+                "soc.target 'tapeout' is qualified only for the Chipathon "
+                "Block A topology (1x SERV TITAN rv32ic with CSRs, 1x SERV "
+                "ATLAS rv32i without CSRs at 0x40010000)"
+            )
+
+    # The platform blocks Block A removes.
+    for key, expected in sorted(TAPEOUT_PLATFORM.items()):
+        actual = soc.get(key, _TAPEOUT_PLATFORM_DEFAULTS.get(key))
+        if actual != expected:
+            errors.append(
+                f"soc.target 'tapeout' requires soc.{key}={expected!r}; "
+                f"{actual!r} was not part of the hardened Block A design"
             )
     scheduler = soc.get("scheduler", {})
     if not isinstance(scheduler, Mapping) or scheduler.get("tdu") is not True:
@@ -405,7 +483,8 @@ def target_capability_errors(soc: Mapping[str, Any]) -> List[str]:
     peripherals = soc.get("peripherals", [])
     if not isinstance(peripherals, list) or set(peripherals) != TAPEOUT_PERIPHERALS:
         errors.append(
-            "soc.target 'tapeout' requires peripherals uart/gpio/timer/spi"
+            "soc.target 'tapeout' requires peripherals "
+            + "/".join(sorted(TAPEOUT_PERIPHERALS))
         )
     return errors
 
@@ -424,7 +503,8 @@ def validate_soc_config(cfg: Any, allow_sim_only: bool = True) -> List[str]:
     allowed_soc = frozenset(
         {
             "name", "pdk", "profile", "target", "cores", "memory", "bus", "bus_opts",
-            "scheduler", "peripherals",
+            "scheduler", "peripherals", "dma", "debug", "plic", "spi_mode",
+            "multicore_timer", "gpio_ao", "ao_rv_timer", "ao_fast_intr",
         }
     )
     errors.extend(_unknown_keys("soc", soc, allowed_soc))
@@ -534,6 +614,23 @@ def validate_soc_config(cfg: Any, allow_sim_only: bool = True) -> List[str]:
                     "rftype", "BRAM_DP_BP"
                 ) == "LOGIC":
                     errors.append(f"{path}: FazyRV CONF=CSR cannot use RFTYPE=LOGIC")
+                # MEMDLY1=1 builds a core that asserts stb/cyc for exactly one
+                # cycle and ignores the ack for flow control
+                # (fazyrv_cntrl.sv: `if (MEMDLY1 | imem_ack_i) state_n = DECODE`).
+                # It is only correct against a memory that ALWAYS answers in one
+                # cycle. On a shared OBI crossbar a slower slave lets the IR load
+                # pulse land mid-execution and overwrite the decoded instruction
+                # registers, silently corrupting results. fazyrv_sci also presents
+                # a 0-latency view by clock-stalling, so there is no latency for
+                # MEMDLY1 to describe. Reject it here rather than after a
+                # two-minute RTL build.
+                if entry.get("memdly1", False):
+                    errors.append(
+                        f"{path}: FazyRV memdly1 is unsupported — fazyrv_sci "
+                        "presents a 0-latency Wishbone view by clock-stalling, "
+                        "and MEMDLY1=1 makes the core ignore the ack and assume "
+                        "a fixed 1-cycle memory the OBI crossbar cannot promise"
+                    )
             elif ip in {"serv", "qerv"}:
                 if ("c" in isa_extensions) != bool(entry.get("compressed", False)):
                     errors.append(
@@ -575,18 +672,155 @@ def validate_soc_config(cfg: Any, allow_sim_only: bool = True) -> List[str]:
                     f"{path}: current Snitch integration is RV32I-only; RVE/RVM are unavailable"
                 )
 
+    dma_kind = soc.get("dma", "idma")
+    if dma_kind not in VALID_DMA:
+        errors.append(
+            f"soc.dma {dma_kind!r} not in {sorted(VALID_DMA)}"
+        )
+    elif dma_kind == "xheep" and total_cores > 1:
+        # Not a knob: ao_peripheral_subsystem.sv.tpl keys the DMA flavour off
+        # is_mc, and the two flavours have DIFFERENT PORT GEOMETRY -- the
+        # simple DMA adds a third `dma_addr_*` master per stream
+        # (DMA_OBI_PORTS_PER_STREAM 3 vs the iDMA's 2), which changes the
+        # module port list, core_v_mini_mcu wiring, system_bus, and the
+        # SYSTEM_XBAR_NMASTER index map. Accepting this value and silently
+        # instantiating the iDMA anyway would be worse than refusing it.
+        errors.append(
+            "soc.dma 'xheep' is not wired for multi-core configs "
+            f"({total_cores} cores): the simple DMA's third address master "
+            "per stream changes the crossbar index map. Use 'idma', or "
+            "'none' if the design issues no bulk copies."
+        )
+
+    # Debug subsystem and PLIC. Both default to present; both are pure area
+    # when a design does not use them. Removing the PLIC removes the ONLY path
+    # from a peripheral interrupt (UART/SPI/GPIO/I2C) to a hart -- CLINT timer
+    # and software interrupts are unaffected, which is why a TDU-driven wake
+    # design can drop it. Removing the debug subsystem removes JTAG/DTM and the
+    # RISC-V debug module: no halt, no step, no external bring-up access.
+    for key in ("debug", "plic", "multicore_timer", "gpio_ao",
+                "ao_rv_timer", "ao_fast_intr"):
+        value = soc.get(key, True)
+        if type(value) is not bool:
+            errors.append(
+                f"soc.{key} must be a boolean, got {type(value).__name__}"
+            )
+
+    spi_mode = soc.get("spi_mode", "full")
+    if spi_mode not in VALID_SPI_MODE:
+        errors.append(f"soc.spi_mode {spi_mode!r} not in {sorted(VALID_SPI_MODE)}")
+
     mem = soc.get("memory", {})
     if not isinstance(mem, dict):
         errors.append("memory must be a mapping")
         mem = {}
     errors.extend(
-        _unknown_keys("memory", mem, frozenset({"sram_kb", "boot_rom_kb"}))
+        _unknown_keys(
+            "memory",
+            mem,
+            frozenset({"sram_kb", "boot_rom_kb", "external", "scratchpad_bytes"}),
+        )
     )
     sram_kb = mem.get("sram_kb", 32)
-    if type(sram_kb) is not int or not 8 <= sram_kb <= 512:
-        errors.append(f"memory.sram_kb must be an integer from 8 to 512, got {sram_kb!r}")
+    # sram_kb == 0 declares that the SoC carries no on-chip SRAM macros. Two
+    # shapes are legal (docs/external_memory_boot_design.md, Option C):
+    #
+    #   XIP-only        no memory.external. Every hart executes in place from
+    #                   the flash window and NOTHING writes to memory: no
+    #                   stack, no .data, no .bss. Liveness/telemetry has to go
+    #                   to peripheral registers. This is the bring-up shape --
+    #                   it needs no memory controller at all.
+    #
+    #   external RAM    memory.external declared. Code still XIPs from flash;
+    #                   the off-chip region carries only writable data, which
+    #                   crt0 initialises the ordinary way (zero .bss, copy
+    #                   .data from flash). No image staging is required
+    #                   because code is already resident in non-volatile flash.
+    #
+    # Both rest on the same fact: code is read-only, so it never needs to be
+    # copied anywhere.
+    if sram_kb == 0:
+        pass  # both shapes are legal; boot_addr placement decides which
+    elif type(sram_kb) is not int or not 8 <= sram_kb <= 512:
+        errors.append(
+            "memory.sram_kb must be 0 (external-memory profile) or an integer "
+            f"from 8 to 512, got {sram_kb!r}"
+        )
     elif sram_kb & (sram_kb - 1):
         errors.append(f"memory.sram_kb must be a power of two, got {sram_kb}")
+
+    external = mem.get("external")
+    external_range: Optional[Tuple[int, int]] = None
+    if external is not None:
+        if not isinstance(external, dict):
+            errors.append("memory.external must be a mapping")
+        else:
+            errors.extend(
+                _unknown_keys("memory.external", external, frozenset({"base", "size_kb"}))
+            )
+            raw_base = external.get("base", EXT_SLAVE_BASE)
+            try:
+                base = raw_base if type(raw_base) is int else int(raw_base, 0)
+            except (TypeError, ValueError):
+                base = None
+                errors.append(f"memory.external.base {raw_base!r} is not an address")
+            size_kb = external.get("size_kb", EXT_SLAVE_SIZE_KB)
+            if type(size_kb) is not int or not 1 <= size_kb <= EXT_SLAVE_SIZE_KB:
+                errors.append(
+                    "memory.external.size_kb must be an integer from 1 to "
+                    f"{EXT_SLAVE_SIZE_KB}, got {size_kb!r}"
+                )
+            elif base is not None:
+                if not EXT_SLAVE_BASE <= base < EXT_SLAVE_BASE + EXT_SLAVE_SIZE_KB * 1024:
+                    errors.append(
+                        f"memory.external.base 0x{base:08x} must select the "
+                        f"external-slave window [0x{EXT_SLAVE_BASE:08x}, "
+                        f"0x{EXT_SLAVE_BASE + EXT_SLAVE_SIZE_KB * 1024:08x})"
+                    )
+                else:
+                    external_range = (base, base + size_kb * 1024)
+
+    # ── memory.scratchpad_bytes ──────────────────────────────────────
+    # A sub-KiB on-chip writable scratchpad for the Option C profiles. It exists
+    # because `memory.sram_kb` is integer KiB and the interesting size is below
+    # 1 KiB: the smallest GF180 SRAM macros are 64/128/256/512 BYTES, and
+    # gf180mcu_fd_ip_sram__sram512x8m8wm1 measures 0.209 mm² for 512 B against
+    # 0.419 mm² for a 1 KiB pair. At a 1.25 mm² budget that difference is 17%
+    # of the die, so rounding it up in the schema would quietly cost real area.
+    #
+    # This is DATA-ONLY storage. Code still executes in place from flash
+    # (docs/external_memory_boot_design.md, Option C); the scratchpad exists so
+    # the C runtime has a stack -- Cheshire's LLC-as-SPM lesson, scaled down.
+    scratchpad_bytes = mem.get("scratchpad_bytes")
+    if scratchpad_bytes is not None:
+        if type(scratchpad_bytes) is not int or scratchpad_bytes <= 0:
+            errors.append(
+                "memory.scratchpad_bytes must be a positive integer, "
+                f"got {scratchpad_bytes!r}"
+            )
+        elif scratchpad_bytes >= 1024:
+            errors.append(
+                f"memory.scratchpad_bytes {scratchpad_bytes} is 1 KiB or larger; "
+                "use memory.sram_kb for that. This field exists only for "
+                "sub-KiB scratchpads, where integer KiB cannot express the size"
+            )
+        elif scratchpad_bytes & (scratchpad_bytes - 1):
+            errors.append(
+                "memory.scratchpad_bytes must be a power of two, got "
+                f"{scratchpad_bytes}"
+            )
+        elif scratchpad_bytes < 64:
+            errors.append(
+                f"memory.scratchpad_bytes {scratchpad_bytes} is below the "
+                "smallest realisable macro (64 B)"
+            )
+        elif sram_kb != 0:
+            errors.append(
+                "memory.scratchpad_bytes requires memory.sram_kb: 0 — a design "
+                "with an on-chip SRAM pool should size it with sram_kb rather "
+                "than carry a second, separate writable memory"
+            )
+
     boot_rom_kb = mem.get("boot_rom_kb", 2)
     if type(boot_rom_kb) is not int or not 1 <= boot_rom_kb <= 64:
         errors.append(
@@ -623,11 +857,41 @@ def validate_soc_config(cfg: Any, allow_sim_only: bool = True) -> List[str]:
             address = raw_address if type(raw_address) is int else int(raw_address, 0)
         except (TypeError, ValueError):
             continue  # ParamSpec already reports the field-level error.
+        # A worker's reset vector must land in a declared *executable* region.
+        # Historically that meant on-chip SRAM only; the external-memory profile
+        # adds memory.external, so the check is now "any declared region".
         if type(sram_kb) is int and 8 <= sram_kb <= 512:
             if address < 0 or address >= sram_kb * 1024:
                 errors.append(
                     f"cores[{index}].boot_addr 0x{address:08x} must select SRAM "
                     f"[0x00000000, 0x{sram_kb * 1024:08x})"
+                )
+        elif sram_kb == 0 and "boot_addr" in entry:
+            # Only an explicit reset vector is region-checked. A TITAN has none
+            # (it enters the platform BOOT_ADDR, i.e. the boot ROM), so its
+            # 0x180 placeholder must not be measured against external memory.
+            #
+            # With no on-chip SRAM a worker may reset into the flash XIP window
+            # (its code is already resident and read-only) or into a declared
+            # external RAM region. Anything else has no backing store.
+            in_flash = FLASH_XIP_BASE <= address < FLASH_XIP_BASE + FLASH_XIP_SIZE
+            in_external = (
+                external_range is not None
+                and external_range[0] <= address < external_range[1]
+            )
+            if not (in_flash or in_external):
+                allowed = (
+                    f"the flash XIP window [0x{FLASH_XIP_BASE:08x}, "
+                    f"0x{FLASH_XIP_BASE + FLASH_XIP_SIZE:08x})"
+                )
+                if external_range is not None:
+                    allowed += (
+                        f" or the declared external region "
+                        f"[0x{external_range[0]:08x}, 0x{external_range[1]:08x})"
+                    )
+                errors.append(
+                    f"cores[{index}].boot_addr 0x{address:08x} must select "
+                    f"{allowed} when memory.sram_kb is 0"
                 )
         if isinstance(isa, str):
             abi = "ilp32e" if isa.startswith("rv32e") else (
@@ -702,11 +966,13 @@ def validate_soc_config(cfg: Any, allow_sim_only: bool = True) -> List[str]:
         if num_banks != "auto" and (type(num_banks) is not int or num_banks < 1):
             errors.append("bus_opts.log.num_banks must be 'auto' or an integer >= 1")
         if bus == "log" and total_cores > 0 and type(sram_kb) is int:
-            num_masters = (
-                2 * total_cores
-                + 1
-                + IDMA_OBI_PORTS_PER_STREAM * STANDARD_DMA_MASTER_PORTS
-            )
+            if dma_kind == "none":
+                dma_masters = 0
+            elif dma_kind == "xheep":
+                dma_masters = 3 * STANDARD_DMA_MASTER_PORTS
+            else:
+                dma_masters = IDMA_OBI_PORTS_PER_STREAM * STANDARD_DMA_MASTER_PORTS
+            num_masters = 2 * total_cores + 1 + dma_masters
             required_banks = 1 << (num_masters - 1).bit_length()
             resolved_banks = required_banks if num_banks == "auto" else num_banks
             if type(resolved_banks) is int and resolved_banks >= 1:
@@ -825,12 +1091,27 @@ def validate_soc_config(cfg: Any, allow_sim_only: bool = True) -> List[str]:
 
 
 def expanded_user_peripherals(
-    peripherals: List[str], *, multicore: bool = False
+    peripherals: List[str],
+    *,
+    multicore: bool = False,
+    plic: bool = True,
+    multicore_timer: bool = True,
 ) -> FrozenSet[str]:
-    """Map public peripheral names to concrete x-heep peripheral blocks."""
+    """Map public peripheral names to concrete x-heep peripheral blocks.
 
-    selected = set(MANDATORY_USER_PERIPHERALS)
-    if multicore:
+    ``plic=False`` drops rv_plic from the otherwise-mandatory set. The
+    peripheral_subsystem template already carries a complete tie-off branch
+    for its absence, so this is an area choice, not a structural one -- but it
+    leaves external peripheral interrupts with no route to any hart.
+    """
+
+    selected = set(MANDATORY_USER_PERIPHERALS) if plic else set()
+    if multicore and multicore_timer:
+        # MULTICORE_USER_PERIPHERALS force-adds rv_timer to every multi-core
+        # config. A design whose harts take their timer and software interrupts
+        # from mosaic_clint does not need it, and it measures 0.062 mm2.
+        # Setting soc.multicore_timer: false drops it; an explicit `timer` entry
+        # in soc.peripherals still brings it back through PERIPHERAL_EXPANSION.
         selected.update(MULTICORE_USER_PERIPHERALS)
     for peripheral in peripherals:
         selected.update(PERIPHERAL_EXPANSION[peripheral])

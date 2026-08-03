@@ -1,0 +1,73 @@
+{
+   "creator": "Yosys 0.62 (git sha1 7326bb7d6641500ecb285c291a54a662cb1e76cf, clang++ 21.1.2 -fPIC -O3)",
+   "invocation": "stat -json -liberty /mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_signoff/tmp/4c15d0c18cbb4d1087973e75b5ffdd6f.lib -liberty /mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_signoff/tmp/b1fe26c4b61443d7a4dc4ff2d3374ba1.lib -liberty /mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_signoff/tmp/8f90355fd08a496baf796b58afff6261.lib ",
+   "modules": {
+      "\\mosaic_block_a": {
+         "num_wires":         23636,
+         "num_wire_bits":     30276,
+         "num_pub_wires":     1808,
+         "num_pub_wire_bits": 8146,
+         "num_ports":         11,
+         "num_port_bits":     20,
+         "num_memories":      0,
+         "num_memory_bits":   0,
+         "num_processes":     0,
+         "num_cells":         28491,
+         "num_submodules":       0,
+         "area":              373225.708800,
+         "sequential_area":    372786.668800,
+         "num_cells_by_type": {
+            "$_ANDNOT_": 4555,
+            "$_AND_": 575,
+            "$_MUX_": 10907,
+            "$_NAND_": 637,
+            "$_NOR_": 536,
+            "$_NOT_": 643,
+            "$_ORNOT_": 585,
+            "$_OR_": 3875,
+            "$_XNOR_": 135,
+            "$_XOR_": 450,
+            "gf180mcu_fd_sc_mcu7t5v0__bufz_4": 4,
+            "gf180mcu_fd_sc_mcu7t5v0__dffnq_1": 4,
+            "gf180mcu_fd_sc_mcu7t5v0__dffq_1": 4081,
+            "gf180mcu_fd_sc_mcu7t5v0__dffrnq_1": 1325,
+            "gf180mcu_fd_sc_mcu7t5v0__dffsnq_1": 175,
+            "gf180mcu_fd_sc_mcu7t5v0__icgtp_1": 4
+         }
+      }
+   },
+      "design": {
+         "num_wires":         23636,
+         "num_wire_bits":     30276,
+         "num_pub_wires":     1808,
+         "num_pub_wire_bits": 8146,
+         "num_ports":         11,
+         "num_port_bits":     20,
+         "num_memories":      0,
+         "num_memory_bits":   0,
+         "num_processes":     0,
+         "num_cells":         28491,
+         "num_submodules":       0,
+         "area":              373225.708800,
+         "sequential_area":    372786.668800,
+         "num_cells_by_type": {
+            "$_ANDNOT_": 4555,
+            "$_AND_": 575,
+            "$_MUX_": 10907,
+            "$_NAND_": 637,
+            "$_NOR_": 536,
+            "$_NOT_": 643,
+            "$_ORNOT_": 585,
+            "$_OR_": 3875,
+            "$_XNOR_": 135,
+            "$_XOR_": 450,
+            "gf180mcu_fd_sc_mcu7t5v0__bufz_4": 4,
+            "gf180mcu_fd_sc_mcu7t5v0__dffnq_1": 4,
+            "gf180mcu_fd_sc_mcu7t5v0__dffq_1": 4081,
+            "gf180mcu_fd_sc_mcu7t5v0__dffrnq_1": 1325,
+            "gf180mcu_fd_sc_mcu7t5v0__dffsnq_1": 175,
+            "gf180mcu_fd_sc_mcu7t5v0__icgtp_1": 4
+         }
+      }
+}
+

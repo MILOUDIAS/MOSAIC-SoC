@@ -3,7 +3,7 @@
 //
 // tdu_tb.sv — Self-checking testbench for the Task Dispatch Unit.
 // Verifies: register read/write, task FIFO push/pop ordering and status,
-// wake-pulse generation, CPI estimate array, energy counter, error paths.
+// wake-pulse generation, CPI estimate array, active-hart-cycles counter, error paths.
 
 `timescale 1ns/1ps
 
@@ -205,19 +205,19 @@ module tdu_tb;
     bus_read(32'h20 + 4*0, rdata);
     check(rdata, 32'h0, "CPI_EST[0] default");
 
-    // ── 12. Energy counter increments with running cores ──
+    // ── 12. Active-hart-cycles counter increments with running cores ──
     bus_write(32'h1C, 32'h0);  // clear
     bus_read(32'h1C, rdata);
-    check(rdata, 32'h0, "ENERGY cleared");
+    check(rdata, 32'h0, "ACTIVE_HART_CYCLES cleared");
     core_running = 7'b0000011;  // 2 cores running
     repeat (5) @(posedge clk);
     @(negedge clk);
     core_running = '0;
     bus_read(32'h1C, rdata);
     if (rdata == 32'h0) begin
-      $display("[FAIL] ENERGY did not increment: 0x%08h", rdata);
+      $display("[FAIL] ACTIVE_HART_CYCLES did not increment: 0x%08h", rdata);
       errors++;
-    end else $display("[PASS] ENERGY incremented to 0x%08h", rdata);
+    end else $display("[PASS] ACTIVE_HART_CYCLES incremented to 0x%08h", rdata);
 
     // ── 13. Read-only path: write to CORE_STATUS is ignored ──
     bus_write(32'h00, 32'hDEAD);
