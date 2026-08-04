@@ -446,7 +446,27 @@ class ConfigAuthor:
                 summary=f"Unknown core '{core}'",
                 errors=[f"Available cores: {sorted(VALID_CORE_IPS)}"],
             )
-        isa = CORE_DEFAULTS.get(core, {}).get("isa", "rv32i")
+        # The ISA must come from the authoritative registry, not from a bare
+        # "rv32i" default. CORE_DEFAULTS had no hazard3 entry, so wake-demo
+        # configs for it were emitted as rv32i and rejected at validation
+        # ("valid: ['rv32imc']") -- the documented `tb-smith wake-demo hazard3`
+        # path could not run at all. Any core added to the registry without a
+        # CORE_DEFAULTS entry would have repeated it.
+        from util.xheep_gen.core_registry import CORE_SPECS
+
+        supported = CORE_SPECS[core].isas
+        preferred = CORE_DEFAULTS.get(core, {}).get("isa")
+        if preferred not in supported:
+            # Smallest workable ISA first: the demo firmware is plain rv32i,
+            # so prefer a base variant and only climb when the core demands it.
+            preferred = next(
+                (candidate for candidate in
+                 ("rv32i", "rv32ic", "rv32im", "rv32imc", "rv32e", "rv32ec",
+                  "rv32emc")
+                 if candidate in supported),
+                sorted(supported)[0],
+            )
+        isa = preferred
         cores = [
             {"ip": "cv32e20", "isa": "rv32emc", "count": 1, "role": "titan"},
             {"ip": core, "isa": isa, "count": 1, "role": "atlas",

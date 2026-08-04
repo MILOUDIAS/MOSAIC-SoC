@@ -1,6 +1,7 @@
 soc:
   name: mosaic_hazard3
   pdk: gf180mcu
+  target: rtl
   cores:
   - ip: cv32e20
     isa: rv32emc

@@ -38,6 +38,28 @@ Deterministic grammar → config → topo check → mosaic-gen → full-SoC TDU 
 demo → **EXIT SUCCESS**. Every parse decision is reported (`matched` /
 `unrecognized` / `repairs` — nothing silent).
 
+## 1a. The tapeout part, and where the model actually is
+
+```bash
+./demo/03_blocka_from_prompt.sh
+```
+
+The same claim on the design being taped out rather than on a toy — and it
+separates the two halves rather than blurring them:
+
+| | |
+|---|---|
+| **steps 2–5** | no model. The regex grammar reproduces `configs/mosaic_tapeout_ultra.yaml` field-for-field, then the capability gate **refuses** the same prompt with `no debug` removed, and refuses a sim-only core asked to tape out. CI-able; evidence about the *guardrails*. |
+| **step 6** | the model. Gated on an agent harness on PATH (`claude` / `omp`), **not** an API key. It gets the framing `oh-my-soc agent` sends — imported from the harness, not retyped — and must reach the frozen config through typed `config-author` flags, with `soc-from-prompt` explicitly off the table. |
+
+Step 6 is *reported*, not asserted: a model run is evidence, so the exit status
+stays governed by the deterministic steps and a divergence is printed in full.
+
+```bash
+MOSAIC_DEMO_AGENT=off ./demo/03_blocka_from_prompt.sh   # skip the model step
+MOSAIC_DEMO_AGENT=omp ./demo/03_blocka_from_prompt.sh   # force a driver
+```
+
 ## 2. Wrap a NEW core from GitHub — the 4-command story
 
 ```bash

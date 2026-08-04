@@ -7,21 +7,21 @@ RTL→GDSII flow for the MOSAIC SoC on **GF180MCU**, using **LibreLane 3.0.0**
 
 ## Layout
 
-| Path                                 | Purpose                                                                                                                          |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `config.yaml`                        | **Chip flow** config (`DESIGN_NAME: mosaic_chip_top`, GF180 DRC waivers, PDN, clock) — full chip with pad ring + sealring.       |
-| `slots/slot_mosaic.yaml`             | Floorplan + pad map (`DIE_AREA`, `PAD_{N,S,E,W}`), merged on top of `config.yaml`.                                               |
-| `config_classic.yaml`                | **Classic flow** config (`DESIGN_NAME: core_v_mini_mcu`) — hardens the SoC core only, **no pad ring**. Self-contained (no slot). |
-| `core_classic.sdc`                   | Timing constraints for the Classic flow (clock on `clk_i`, no pad cell).                                                         |
-| `src/chip_top.sv`                    | GF180 physical pad frame (in_s/in_c/bi_24t/dvdd/dvss cells). **Complete.**                                                       |
-| `src/mosaic_soc_core.sv`             | Non-signoff adapter placeholder. Physical runs reject it and require a bound version in `PHYSICAL_BUNDLE`.                       |
-| `src/slot_defines.svh`               | `SLOT_MOSAIC` pad counts (from `configs/pad_cfg.py`).                                                                            |
-| `pdn_cfg.tcl`                        | OpenROAD PDN generator (stdcell grid + core ring).                                                                               |
-| `chip_top.sdc`                       | Timing constraints (50 MHz / 20 ns).                                                                                             |
-| `scripts/`                           | `padring.py` (fast pad-only build), `lay2img.py`, `run_native.sh`, `run_docker_iic.sh`.                                          |
-| `scripts/preflight.py`               | Fail-closed capability, hash, RTL-binding, and SRAM-view gate.                                                                   |
-| `Makefile`                           | `clone-pdk`, standalone `mosaic-gen`, bundle preflights, hardening, GUIs, `render-image`.                                        |
-| `flake.nix`/`shell.nix`/`flake.lock` | Pinned toolchain (LibreLane 3.0.0 + FOSSi cache).                                                                                |
+| Path | Purpose |
+|------|---------|
+| `config.yaml` | **Chip flow** config (`DESIGN_NAME: mosaic_chip_top`, GF180 DRC waivers, PDN, clock) — full chip with pad ring + sealring. |
+| `slots/slot_mosaic.yaml` | Floorplan + pad map (`DIE_AREA`, `PAD_{N,S,E,W}`), merged on top of `config.yaml`. |
+| `config_classic.yaml` | **Classic flow** config (`DESIGN_NAME: core_v_mini_mcu`) — hardens the SoC core only, **no pad ring**. Self-contained (no slot). |
+| `core_classic.sdc` | Timing constraints for the Classic flow (clock on `clk_i`, no pad cell). |
+| `src/chip_top.sv` | GF180 physical pad frame (in_s/in_c/bi_24t/dvdd/dvss cells). **Complete.** |
+| `src/mosaic_soc_core.sv` | Non-signoff adapter placeholder. Physical runs reject it and require a bound version in `PHYSICAL_BUNDLE`. |
+| `src/slot_defines.svh` | `SLOT_MOSAIC` pad counts (from `configs/pad_cfg.py`). |
+| `pdn_cfg.tcl` | OpenROAD PDN generator (stdcell grid + core ring). |
+| `chip_top.sdc` | Timing constraints (50 MHz / 20 ns). |
+| `scripts/` | `padring.py` (fast pad-only build), `lay2img.py`, `run_native.sh`, `run_docker_iic.sh`. |
+| `scripts/preflight.py` | Fail-closed capability, hash, RTL-binding, and SRAM-view gate. |
+| `Makefile` | `clone-pdk`, standalone `mosaic-gen`, bundle preflights, hardening, GUIs, `render-image`. |
+| `flake.nix`/`shell.nix`/`flake.lock` | Pinned toolchain (LibreLane 3.0.0 + FOSSi cache). |
 
 ## Current physical-flow status
 
@@ -47,7 +47,7 @@ to explore area/timing quickly; nothing it produces is attested or signed off.
 The MPW plan is [`docs/padrinrg/padring_proposal.jpg`](../../docs/padrinrg/padring_proposal.jpg):
 88 pins over a 2235 × 2235 µm shared die, 5 block sizes. MOSAIC targets **Block A** — a
 quarter of the area (1117.5 µm square = 1.2488 mm²) with a 22-pin budget. There is no pad
-ring in this flow: for an MPW block the macro _is_ the deliverable.
+ring in this flow: for an MPW block the macro *is* the deliverable.
 
 ```
 experimental/
@@ -73,13 +73,13 @@ nix develop --command librelane experimental/config_blocka.yaml \
 Result: die exactly 1117.5 × 1117.5 µm, **0 routing DRC**, **0 antenna**, setup +20.67 ns
 and hold +0.075 ns worst-corner, 81.2% utilization, 44 684 cells.
 
-**What the skips mean.** DRC, LVS, XOR and IR drop are _not run_ — their status is
+**What the skips mean.** DRC, LVS, XOR and IR drop are *not run* — their status is
 UNKNOWN, not clean. `Checker.TrDRC` and `Checker.YosysUnmappedCells` are deliberately
 left ENABLED: an unmapped cell has no physical master and a routing violation is a real
 short, so neither may be waived. The IR-drop skip was forced by `PDN_CORE_RING: false`,
 which leaves PSM without a power source.
 
-### The signoff run (2026-08-02)
+### The signoff run
 
 ```bash
 make mosaic-gen MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml   # generate the RTL
@@ -103,7 +103,7 @@ Two things had to be fixed before it could reach the decks:
 
 - **Power delivery.** `PDN_CORE_RING: false` gave OpenROAD PSM no source
   (`PSM-0069`, 101 354 grid violations); a ring on Metal2/Metal3 collides with the
-  router (bug 27) and one placed on Metal4/Metal5 _explicitly_ hits `PDN-0186`, because
+  router (bug 27) and one placed on Metal4/Metal5 *explicitly* hits `PDN-0186`, because
   the PDN script emits three extra `add_pdn_connect` calls guarded by
   `info exists PDN_CORE_*_LAYER` that then duplicate the strap grid's own connect. The
   answer is to keep the ring and **not set those variables at all** — they default to the
@@ -140,13 +140,13 @@ by its lowercase SHA-256 digest:
   "schema_version": 1,
   "build_key": "<manifest build_key>",
   "artifacts": {
-    "manifest": { "path": "manifest.json", "sha256": "<64 hex>" },
-    "flattened_rtl": { "path": "design.v", "sha256": "<64 hex>" },
-    "bound_core_rtl": { "path": "mosaic_soc_core.sv", "sha256": "<64 hex>" },
-    "sram_gds": { "path": "sram/mosaic_sram.gds", "sha256": "<64 hex>" },
-    "sram_lef": { "path": "sram/mosaic_sram.lef", "sha256": "<64 hex>" },
-    "sram_lib": { "path": "sram/mosaic_sram.lib", "sha256": "<64 hex>" },
-    "sram_verilog": { "path": "sram/mosaic_sram.v", "sha256": "<64 hex>" }
+    "manifest":       {"path": "manifest.json", "sha256": "<64 hex>"},
+    "flattened_rtl":  {"path": "design.v", "sha256": "<64 hex>"},
+    "bound_core_rtl": {"path": "mosaic_soc_core.sv", "sha256": "<64 hex>"},
+    "sram_gds":       {"path": "sram/mosaic_sram.gds", "sha256": "<64 hex>"},
+    "sram_lef":       {"path": "sram/mosaic_sram.lef", "sha256": "<64 hex>"},
+    "sram_lib":       {"path": "sram/mosaic_sram.lib", "sha256": "<64 hex>"},
+    "sram_verilog":   {"path": "sram/mosaic_sram.v", "sha256": "<64 hex>"}
   }
 }
 ```
@@ -190,6 +190,23 @@ make classic PHYSICAL_BUNDLE=/abs/path/to/bundle
 
 `make harden` does not generate or discover sources implicitly. It validates the bundle,
 exports its exact artifact paths, and only then launches LibreLane.
+
+## Remaining authoring steps (before a real tapeout)
+
+1. **Bind the SoC pins** in a bundle-owned `mosaic_soc_core.sv` — instantiate
+   `x_heep_system` and map each pad bus bit to its `pad_cfg.py` pin, keeping the
+   bit indices aligned with `slots/slot_mosaic.yaml`. (The pad frame itself is
+   done; this adapter is the only RTL gap.)
+2. **Finalize the pad map** — confirm `NUM_*_PADS` in `slot_defines.svh` and the
+   `PAD_{N,S,E,W}` order in `slot_mosaic.yaml` against the bonding diagram.
+3. **SRAM macros** — map the 32 KB SRAM to a GF180 `mosaic_sram` macro and package
+   its GDS/LEF/LIB/Verilog views in the bundle.
+4. **Flatten** — create the bundle's `design.v` from the resolved FuseSoC filelist;
+   `make flatten` is now only a validator and will not bless an ad-hoc stale file.
+5. **Multi-clock SDC** — add derived/gated-clock constraints if the multi-core
+   PoC needs them (`chip_top.sdc` currently constrains the single pad clock).
+6. **DRC posture** — review inherited waiver globs and obtain clean DRC/LVS/STA
+   evidence. `ERROR_ON_MAGIC_DRC` is enabled; `*-nodrc` targets are development-only.
 
 > Inspection-only Docker (`scripts/run_docker_iic.sh`, hpretl/iic-osic-tools) is
 > for viewing a finished GDS, **not** for signoff — its LibreLane version is not

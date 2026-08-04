@@ -3,11 +3,11 @@
 **Frozen config:** [`configs/mosaic_tapeout_ultra.yaml`](../configs/mosaic_tapeout_ultra.yaml)
 **Target:** Chipathon 2026 shared-die **Block A** — 1117.5 µm square (¼ of the 2235 µm
 project area), 22 pins, delivered as a **hard macro with no pad ring**.
-**Date:** 2026-08-03
+**Date:** 2026-08-01
 
 This document exists because the schematic review asked one question the project could
-not previously answer in one place: _which single configuration is being taped out, and
-does it pass verification end-to-end?_ Everything below is measured output, with the
+not previously answer in one place: *which single configuration is being taped out, and
+does it pass verification end-to-end?* Everything below is measured output, with the
 command that produced it.
 
 ---
@@ -17,14 +17,14 @@ command that produced it.
 **Neither of the two the review saw.** The `1× FazyRV + 2× SERV` die on the slide and the
 7-hart PoC in the appendix are both superseded. The frozen part is:
 
-|             |                                                                                                                |
-| ----------- | -------------------------------------------------------------------------------------------------------------- |
-| harts       | **2** — SERV TITAN (`rv32ic`, CSRs, compressed) + SERV worker (`rv32i`, no CSRs, boots at `0x40010000`)        |
-| memory      | no SRAM pool; **128 B scratchpad** (flip-flops), 1 KB boot ROM; code executes **XIP from external QSPI flash** |
-| bus         | OBI crossbar                                                                                                   |
-| dispatch    | TDU enabled, `dynamic`                                                                                         |
-| peripherals | UART only                                                                                                      |
-| removed     | DMA, debug/JTAG, PLIC, SPI host (XIP reader only), AO rv_timer, AO fast-intr, GPIO-AO, multicore timer         |
+| | |
+|---|---|
+| harts | **2** — SERV TITAN (`rv32ic`, CSRs, compressed) + SERV worker (`rv32i`, no CSRs, boots at `0x40010000`) |
+| memory | no SRAM pool; **128 B scratchpad** (flip-flops), 1 KB boot ROM; code executes **XIP from external QSPI flash** |
+| bus | OBI crossbar |
+| dispatch | TDU enabled, `dynamic` |
+| peripherals | UART only |
+| removed | DMA, debug/JTAG, PLIC, SPI host (XIP reader only), AO rv_timer, AO fast-intr, GPIO-AO, multicore timer |
 
 **The boot hart is SERV, not FazyRV.** The review asked whether boot had been verified on
 FazyRV; that question is moot for this part — FazyRV is not in it. SERV boot is
@@ -38,7 +38,7 @@ regression suite. None of them is in the tapeout config.
 ## 2. The RTL that was verified is the RTL that was hardened
 
 The generator is content-addressed: a config resolves to `build/mosaic/<name>-<hash>/`.
-Simulation and hardening ran from _different_ hashes, because the simulation flow adds a
+Simulation and hardening ran from *different* hashes, because the simulation flow adds a
 generated-firmware directory to the bundle. The RTL is the same, and that is checkable
 rather than assertable:
 
@@ -51,7 +51,7 @@ done
 # compared 26 RTL files, 0 differ
 ```
 
-Three _software-contract_ files do differ, and by design: `sw/boot_images.json`,
+Three *software-contract* files do differ, and by design: `sw/boot_images.json`,
 `sw/include/mosaic_topology.h` and `sw/include/mosaic_deployment.h` carry the
 `target` string (`simulation` -> `tapeout`, §8) and its derived CRC. They are firmware
 headers and do not enter synthesis.
@@ -75,7 +75,7 @@ rather than take it on trust.
 MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml bash tb/mosaic_soc/run_generic.sh
 ```
 
-This TB consumes the _generated_ boot metadata, builds one ABI-correct firmware image per
+This TB consumes the *generated* boot metadata, builds one ABI-correct firmware image per
 boot slot, and requires **every** configured hart to report — it cannot pass by ignoring a
 hart. Result:
 
@@ -107,7 +107,7 @@ Covered on the frozen part: boot-ROM entry, XIP execution from external flash, T
 access and worker wake, multi-hart execution, and the `soc_ctrl` exit register that drives
 `status_o`.
 
-Not covered by _this_ program: UART traffic. That gap is closed separately by
+Not covered by *this* program: UART traffic. That gap is closed separately by
 `tb/mosaic_soc/run_uart.sh` (below), which was written because the area work had modified
 the UART's RTL and nothing exercised it.
 
@@ -122,19 +122,19 @@ The area work cut BOTH OpenTitan UART FIFOs from 32 to 4 entries (0.066 mm², 61
 UART). That is hand-modified vendored RTL in a tapeout candidate, and it was untested.
 `prog_uart/uart.S` checks three things on the frozen part:
 
-| Phase | Check                                                                                                                                                                                                                                                                                |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1     | **TX FIFO depth is really 4.** TX is left _disabled_ so the FIFO cannot drain (`tx_fifo_rready` is gated by `tx_enable`, `wvalid_i` is not), 8 bytes are written blind, and `FIFO_STATUS.TXLVL` must read exactly 4. A positive measurement, not an inference from "it still prints" |
-| 2     | **A polling driver loses nothing:** 23 bytes sent waiting on `!TXFULL`; the UART DPI log must match the string byte for byte                                                                                                                                                         |
-| 3     | **RX path and RX FIFO** through the UART's own system loopback (`CTRL.SLPBK`), so no external stimulus is needed                                                                                                                                                                     |
+| Phase | Check |
+|---|---|
+| 1 | **TX FIFO depth is really 4.** TX is left *disabled* so the FIFO cannot drain (`tx_fifo_rready` is gated by `tx_enable`, `wvalid_i` is not), 8 bytes are written blind, and `FIFO_STATUS.TXLVL` must read exactly 4. A positive measurement, not an inference from "it still prints" |
+| 2 | **A polling driver loses nothing:** 23 bytes sent waiting on `!TXFULL`; the UART DPI log must match the string byte for byte |
+| 3 | **RX path and RX FIFO** through the UART's own system loopback (`CTRL.SLPBK`), so no external stimulus is needed |
 
-A failed phase parks _without_ writing the exit register, so the run ends in timeout rather
+A failed phase parks *without* writing the exit register, so the run ends in timeout rather
 than a false EXIT SUCCESS.
 
 ### The 7-hart production demo does not apply here, and says so
 
 The review's step 4 asked for "end-to-end firmware on that exact config". The firmware
-above _is_ that: real per-hart images, built from this config's generated boot metadata.
+above *is* that: real per-hart images, built from this config's generated boot metadata.
 The separate **7-hart production demo** (`tb/mosaic_soc/run_fw.sh`) is a different
 config's demo and refuses this one:
 
@@ -164,25 +164,25 @@ written yet.
 [`flow/librelane/experimental/mosaic_block_a.sv`](../flow/librelane/experimental/mosaic_block_a.sv)
 wraps `core_v_mini_mcu` and terminates its other 251 ports internally.
 
-|     # | Pin                    | Dir       | Function                                                    |
-| ----: | ---------------------- | --------- | ----------------------------------------------------------- |
-|     1 | `clk_i`                | in        | clock                                                       |
-|     2 | `rst_ni`               | in        | reset, active low                                           |
-|     3 | `boot_select_i`        | in        | boot source select                                          |
-|     4 | `execute_from_flash_i` | in        | XIP enable                                                  |
-|     5 | `uart_rx_i`            | in        | UART receive                                                |
-|     6 | `uart_tx_o`            | out       | UART transmit                                               |
-|     7 | `spi_flash_sck_o`      | out       | QSPI clock                                                  |
-|     8 | `spi_flash_cs_o`       | out       | QSPI chip select                                            |
-|  9–12 | `spi_flash_sd_io[3:0]` | **inout** | QSPI data (true tristate, `bufz_4`)                         |
-|    13 | `status_valid_o`       | out       | exit-value strobe                                           |
-| 14–20 | `status_o[6:0]`        | out       | exit value — **the only observability** with `debug: false` |
-|    21 | `VDD`                  | power     | 5 V                                                         |
-|    22 | `VSS`                  | power     | ground                                                      |
+| # | Pin | Dir | Function |
+|--:|---|---|---|
+| 1 | `clk_i` | in | clock |
+| 2 | `rst_ni` | in | reset, active low |
+| 3 | `boot_select_i` | in | boot source select |
+| 4 | `execute_from_flash_i` | in | XIP enable |
+| 5 | `uart_rx_i` | in | UART receive |
+| 6 | `uart_tx_o` | out | UART transmit |
+| 7 | `spi_flash_sck_o` | out | QSPI clock |
+| 8 | `spi_flash_cs_o` | out | QSPI chip select |
+| 9–12 | `spi_flash_sd_io[3:0]` | **inout** | QSPI data (true tristate, `bufz_4`) |
+| 13 | `status_valid_o` | out | exit-value strobe |
+| 14–20 | `status_o[6:0]` | out | exit value — **the only observability** with `debug: false` |
+| 21 | `VDD` | power | 5 V |
+| 22 | `VSS` | power | ground |
 
 **This list is LVS-verified, not asserted.** Netgen compared the extracted layout against
-the netlist and matched every pin, reporting _"Cell pin lists are equivalent"_ and
-_"Circuits match uniquely"_. See `runs/blocka_signoff/final/` and §6.
+the netlist and matched every pin, reporting *"Cell pin lists are equivalent"* and
+*"Circuits match uniquely"*. See `runs/blocka_signoff/final/` and §6.
 
 `status_o[6:0]` must be bonded. With no JTAG it is the only way to observe the part.
 
@@ -205,22 +205,22 @@ cd flow/librelane && ./experimental/run_signoff.sh
 The runner refuses to start if its config contains a step substitution, so a signoff run
 cannot silently become a partial one.
 
-|                                 |                                                                    |
-| ------------------------------- | -----------------------------------------------------------------: |
-| die                             |     **1117.5 × 1117.5 µm = 1.2488 mm²** — exactly the Block A slot |
-| utilization                     |                                           84.4% (44 355 std cells) |
-| Magic DRC                       |                                                              **0** |
-| KLayout DRC                     |                                                              **0** |
-| Magic illegal overlap           |                                                              **0** |
-| Netgen LVS                      | **0** — _"Circuits match uniquely"_, 0 unmatched devices/nets/pins |
-| KLayout↔Magic XOR              |                                                              **0** |
-| routing DRC                     |                                                              **0** |
-| antenna                         |                                                              **0** |
-| disconnected pins               |                                                              **0** |
-| power-grid violations           |                                                   **0** (VDD, VSS) |
-| worst IR drop                   |                                                  **120 µV** on 5 V |
-| max-cap / max-fanout / max-slew |                  **0** / **1** / **591** (vs the library's 4.0 ns) |
-| setup / hold WS                 |              **+20.86 ns** / **+0.066 ns**, TNS 0 at all 9 corners |
+| | |
+|---|---:|
+| die | **1117.5 × 1117.5 µm = 1.2488 mm²** — exactly the Block A slot |
+| utilization | 84.4% (44 355 std cells) |
+| Magic DRC | **0** |
+| KLayout DRC | **0** |
+| Magic illegal overlap | **0** |
+| Netgen LVS | **0** — *"Circuits match uniquely"*, 0 unmatched devices/nets/pins |
+| KLayout↔Magic XOR | **0** |
+| routing DRC | **0** |
+| antenna | **0** |
+| disconnected pins | **0** |
+| power-grid violations | **0** (VDD, VSS) |
+| worst IR drop | **120 µV** on 5 V |
+| max-cap / max-fanout / max-slew | **0** / **1** / **591** (vs the library's 4.0 ns) |
+| setup / hold WS | **+20.86 ns** / **+0.066 ns**, TNS 0 at all 9 corners |
 
 **Clock: 10 MHz** (`CLOCK_PERIOD: 100`). The review advised starting below the 50 MHz on
 the slide, and noted the official padring config uses 25 MHz. This run is deliberately
@@ -234,16 +234,16 @@ target with the organizers is still open.
 
 The review asked for no inherited or blanket waivers. The complete list:
 
-| Setting                                        | Status               | Justification                                                                                                                                                                                                                                                             |
-| ---------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ERROR_ON_SYNTH_CHECKS`                        | **on** (was off)     | Turning it back on is what exposed bugs 28–29. No longer waived.                                                                                                                                                                                                          |
-| `ERROR_ON_MAGIC_DRC`                           | **on**               | A real violation fails the flow.                                                                                                                                                                                                                                          |
-| `ERROR_ON_UNMAPPED_CELLS`                      | **on**               | An unmapped cell has no physical master; cannot be waived.                                                                                                                                                                                                                |
-| `MAGIC_GDS_FLATGLOB`                           | inherited, **inert** | Suppresses GF180 SRAM-macro DRC false positives. This design binds **no** macro (`design__instance__count__macros = 0`), so these patterns match nothing. Kept only so a macro-backed variant does not rediscover them. Should be deleted if the macro path is abandoned. |
-| `KLAYOUT_FILLER_OPTIONS: Metal2_ignore_active` | active               | KLayout filler option carried from the qualified config.                                                                                                                                                                                                                  |
-| `ERROR_ON_LINTER_WARNINGS: false`              | active               | 3 778 Verilator lint warnings, overwhelmingly from vendored IP (OpenTitan, pulp). Lint _errors_ still fail.                                                                                                                                                               |
-| `GRT_ALLOW_CONGESTION: true`                   | active               | Lets global routing proceed into detailed routing, which then converged to **0** violations — so nothing was actually waived in the result.                                                                                                                               |
-| `PL_RESIZER_HOLD_SLACK_MARGIN: 0.05`           | active               | Traded hold margin for area. Hold is positive at every corner but only **+66 ps**; re-check before raising the clock.                                                                                                                                                     |
+| Setting | Status | Justification |
+|---|---|---|
+| `ERROR_ON_SYNTH_CHECKS` | **on** (was off) | Turning it back on is what exposed bugs 28–29. No longer waived. |
+| `ERROR_ON_MAGIC_DRC` | **on** | A real violation fails the flow. |
+| `ERROR_ON_UNMAPPED_CELLS` | **on** | An unmapped cell has no physical master; cannot be waived. |
+| `MAGIC_GDS_FLATGLOB` | inherited, **inert** | Suppresses GF180 SRAM-macro DRC false positives. This design binds **no** macro (`design__instance__count__macros = 0`), so these patterns match nothing. Kept only so a macro-backed variant does not rediscover them. Should be deleted if the macro path is abandoned. |
+| `KLAYOUT_FILLER_OPTIONS: Metal2_ignore_active` | active | KLayout filler option carried from the qualified config. |
+| `ERROR_ON_LINTER_WARNINGS: false` | active | 3 778 Verilator lint warnings, overwhelmingly from vendored IP (OpenTitan, pulp). Lint *errors* still fail. |
+| `GRT_ALLOW_CONGESTION: true` | active | Lets global routing proceed into detailed routing, which then converged to **0** violations — so nothing was actually waived in the result. |
+| `PL_RESIZER_HOLD_SLACK_MARGIN: 0.05` | active | Traded hold margin for area. Hold is positive at every corner but only **+66 ps**; re-check before raising the clock. |
 
 No waiver is applied to DRC, LVS, XOR, antenna or the power grid. All returned zero
 without one.
@@ -279,7 +279,7 @@ without one.
 8. **4 081 of 5 587 flops have no reset** (§10). Not a defect on its own -- datapath flops
    are written before use -- but it is why gate-level simulation needs an explicit
    power-up model, and it deserves a deliberate look before tapeout.
-9. ~~Absolute paths in the LibreLane configs~~ **FIXED** -- resolved at run time by
+8. ~~Absolute paths in the LibreLane configs~~ **FIXED** -- resolved at run time by
    `flow/librelane/scripts/gen_filelist.py`; the configs are machine-independent and a
    test keeps them that way.
 
@@ -287,8 +287,8 @@ without one.
 
 ## 8. The generator's own target validation now describes this part
 
-The review's request 2 was to _reconcile the die configuration with the generator's own
-target validation_. It did not reconcile: `core_registry.TAPEOUT_*` encoded the **7-hart
+The review's request 2 was to *reconcile the die configuration with the generator's own
+target validation*. It did not reconcile: `core_registry.TAPEOUT_*` encoded the **7-hart
 PoC** (1× cv32e20 + 2× FazyRV + 4× SERV, 32 KB SRAM, uart/gpio/timer/spi) as the qualified
 physical matrix. The part being taped out would have been **rejected** by that gate, which
 is precisely why the frozen config said `target: simulation`. The reviewer's phrasing —
@@ -325,13 +325,13 @@ peripheral, a different scratchpad size. 648 pytests pass.
 
 ## 9. Physical-phase items the review flagged for later
 
-| Item                                                 | Status                                                                                                                                                                                                                                                                                                                   |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Gate count / cell area / liberty corner              | **44 355** standard cells, 84.4% utilization, characterised at 9 corners from `gf180mcu_fd_sc_mcu7t5v0__{tt_025C_5v00, ss_125C_4v50, ff_n40C_5v50}` (min/nom/max RC each)                                                                                                                                                |
-| The flatten/slang path                               | There is **no flatten step** for Block A. Yosys reads SystemVerilog directly through the `slang` plugin (`USE_SLANG: true`); sv2v is not used and is broken in this environment. The "flattened RTL" input belongs to the chip-level `PHYSICAL_BUNDLE` path, not this one                                                |
-| Post-synthesis gate-level simulation                 | **Done, functionally.** `tb/gls/run_gls.sh` simulates the POST-PLACE-AND-ROUTE netlist with the PDK cell models, booting XIP from a behavioural QSPI flash through only the 22 bonded pins: **EXIT SUCCESS in 12 399 cycles vs the RTL's ~12 400**. **Timing-annotated GLS is not achievable with open tools** — see §10 |
-| Chip wrapper `flow/librelane/src/mosaic_soc_core.sv` | **Still a template.** Line 68 is `// TODO(authoring step): instantiate x_heep_system and bind pads to pins`. It is chip-level only — Block A ships a macro and does not use it. The hierarchy slide was misleading; this is the correction                                                                               |
-| Closing package (your Q6)                            | `runs/blocka_signoff/final/` — `gds/`, `lef/`, `nl/` + `pnl/` (netlists), `lib/` (9 corners), `sdc/`, `odb/`, `spice/` (the extracted netlist LVS compared against), `metrics.json`. STA is in the run's `*-stapostpnr` reports; DRC/LVS/antenna reports listed by `run_signoff.sh`                                      |
+| Item | Status |
+|---|---|
+| Gate count / cell area / liberty corner | **44 355** standard cells, 84.4% utilization, characterised at 9 corners from `gf180mcu_fd_sc_mcu7t5v0__{tt_025C_5v00, ss_125C_4v50, ff_n40C_5v50}` (min/nom/max RC each) |
+| The flatten/slang path | There is **no flatten step** for Block A. Yosys reads SystemVerilog directly through the `slang` plugin (`USE_SLANG: true`); sv2v is not used and is broken in this environment. The "flattened RTL" input belongs to the chip-level `PHYSICAL_BUNDLE` path, not this one |
+| Post-synthesis gate-level simulation | **Done, functionally.** `tb/gls/run_gls.sh` simulates the POST-PLACE-AND-ROUTE netlist with the PDK cell models, booting XIP from a behavioural QSPI flash through only the 22 bonded pins: **EXIT SUCCESS in 12 399 cycles vs the RTL's ~12 400**. **Timing-annotated GLS is not achievable with open tools** — see §10 |
+| Chip wrapper `flow/librelane/src/mosaic_soc_core.sv` | **Still a template.** Line 68 is `// TODO(authoring step): instantiate x_heep_system and bind pads to pins`. It is chip-level only — Block A ships a macro and does not use it. The hierarchy slide was misleading; this is the correction |
+| Closing package (your Q6) | `runs/blocka_signoff/final/` — `gds/`, `lef/`, `nl/` + `pnl/` (netlists), `lib/` (9 corners), `sdc/`, `odb/`, `spice/` (the extracted netlist LVS compared against), `metrics.json`. STA is in the run's `*-stapostpnr` reports; DRC/LVS/antenna reports listed by `run_signoff.sh` |
 
 On pads: the Integration doc's note that 5 V pads run at 3.3 V costs speed applies to the
 **shared ring**, which this block does not contain. Our only pad-adjacent choice is the
@@ -373,12 +373,12 @@ ifnone
  (posedge A1 => (ZN:A1)) = (1.0,1.0);
 ```
 
-IEEE 1364-2005 SS14.2.6 allows `ifnone` only as the default for _state-dependent
-simple_ paths. Two independent simulators reject it, both correctly:
+IEEE 1364-2005 SS14.2.6 allows `ifnone` only as the default for *state-dependent
+simple* paths. Two independent simulators reject it, both correctly:
 
-| iverilog | `sorry: ifnone with an edge-sensitive path is not supported`        |
-| -------- | ------------------------------------------------------------------- |
-| CVC      | `ERROR [1012] ifnone path illegal - has edge or is state dependent` |
+| iverilog | `sorry: ifnone with an edge-sensitive path is not supported` |
+|---|---|
+| CVC | `ERROR [1012] ifnone path illegal - has edge or is state dependent` |
 
 There are 120 such paths. Under Icarus the models must therefore be compiled
 `-DFUNCTIONAL`, which strips the specify blocks -- and with them exactly the
@@ -402,21 +402,21 @@ it is recorded as open rather than worked around.
 
 Measured on the machine that produced the results above.
 
-| Tool       | Version                                                                                    |
-| ---------- | ------------------------------------------------------------------------------------------ |
-| LibreLane  | 3.0.0                                                                                      |
-| Yosys      | 0.62 (`7326bb7d`) + `slang` plugin                                                         |
-| OpenROAD   | `dcf36133a369abc8f3c5e5738cd4d82e4903c0e0`                                                 |
-| Magic      | 8.3.623                                                                                    |
-| Netgen     | 1.5.316                                                                                    |
-| KLayout    | 0.30.7                                                                                     |
-| PDK        | `gf180mcuD` via open_pdks `40cee970d8a9b7eaea35a34fe7d6068f05721f0a`                       |
-| Verilator  | **5.050** (pinned — the oss-cad-suite nightly's DFG pass miscompiles cv32e40x; see bug 21) |
-| RISC-V GCC | 16.1.0, `riscv32-unknown-elf`                                                              |
-| Python     | 3.14.6                                                                                     |
-| FuseSoC    | `0.2.dev3+gc36dffc85` (x-heep `ot` fork)                                                   |
-| Nix        | 2.32.2                                                                                     |
-| Git LFS    | 3.7.1                                                                                      |
+| Tool | Version |
+|---|---|
+| LibreLane | 3.0.0 |
+| Yosys | 0.62 (`7326bb7d`) + `slang` plugin |
+| OpenROAD | `dcf36133a369abc8f3c5e5738cd4d82e4903c0e0` |
+| Magic | 8.3.623 |
+| Netgen | 1.5.316 |
+| KLayout | 0.30.7 |
+| PDK | `gf180mcuD` via open_pdks `40cee970d8a9b7eaea35a34fe7d6068f05721f0a` |
+| Verilator | **5.050** (pinned — the oss-cad-suite nightly's DFG pass miscompiles cv32e40x; see bug 21) |
+| RISC-V GCC | 16.1.0, `riscv32-unknown-elf` |
+| Python | 3.14.6 |
+| FuseSoC | `0.2.dev3+gc36dffc85` (x-heep `ot` fork) |
+| Nix | 2.32.2 |
+| Git LFS | 3.7.1 |
 
 EDA tools come from the pinned flake in `flow/librelane/`; `nix develop` reproduces them.
 
@@ -457,7 +457,7 @@ $ ./oh-my-soc config-author validate "dir with space/frozen cfg.yaml"   # exit 0
 $ ./oh-my-soc topo-viz check      "dir with space/frozen cfg.yaml"      # exit 0
 ```
 
-Scope note: these exercise space-containing _config and output_ paths. The repository has
+Scope note: these exercise space-containing *config and output* paths. The repository has
 not been relocated to a space-containing root and cloned-fresh; that remains untested.
 
 ---
@@ -473,7 +473,7 @@ cd flow/librelane && ./experimental/run_signoff.sh                 # hours
 Nothing above depends on paths from the machine that built it. The LibreLane configs used
 to carry ~526 absolute paths into a content-addressed FuseSoC build directory, which meant
 the committed signoff could not be reproduced anywhere else, and which had a worse failure
-mode than a missing file: a path that still _resolved_, to an older bundle, would harden
+mode than a missing file: a path that still *resolved*, to an older bundle, would harden
 stale RTL and report clean results for the wrong design.
 
 `flow/librelane/scripts/gen_filelist.py` now resolves the source list from the manifest at

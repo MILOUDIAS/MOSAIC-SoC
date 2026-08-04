@@ -1,18 +1,24 @@
 """cocotb test for the MOSAIC multi-core cpu_subsystem + TDU wake loop.
 
 Drives the generated multi-core SoC (serv + qerv + fazyrv via their SCI wrappers)
-through cocotb_top.sv. All three sim cores are *workers* (no TITAN), so they boot
-dormant and only run once woken — exactly the TDU.core_wake_o → cpu_subsystem
-fetch-enable path this test exercises end-to-end:
+through cocotb_top.sv, exercising the TDU.core_wake_o → cpu_subsystem
+fetch-enable path end-to-end.
 
-  1. Reset, then run a while WITHOUT waking → every worker must stay dormant
-     (no bus traffic, core_sleep_o asserted, sentinel never written).
-  2. Wake hart 0 ONLY → only hart 0 comes alive and retires its program; the
-     other two stay parked. Proves the wake is per-hart, not global.
-  3. Wake the remaining harts → all three retire (write 0x55 to 0x40).
+HART 0 IS NOT DORMANT HERE, AND THAT IS DELIBERATE.
+`configs/mosaic_sim.yaml` declares `profile: testbench` and has no TITAN. A
+worker-only topology has no running hart able to issue the first TDU dispatch,
+so cpu_subsystem.sv.tpl's `testbench_hart0_bootstrap` ties hart 0's
+fetch_enable high (production `soc` profiles still require a TITAN). This test
+predated that rule and asserted all three stayed parked, so it failed on
+hart 0 by design rather than by defect.
 
-This closes the loop the TDU SoC test flagged as open: the wake signal now
-actually releases the cores.
+Per-hart gating is still fully proved by the two harts that ARE dormant:
+
+  1. Reset, run without waking → hart 0 boots (bootstrap); harts 1 and 2 must
+     stay dormant (core_sleep_o asserted, sentinel never written).
+  2. Wake hart 1 ONLY → it comes alive and retires its program while hart 2
+     stays parked. This is the step that proves wake is per-hart, not global.
+  3. Wake hart 2 → all three have retired (write 0x55 to 0x40).
 
 Run via tb/mosaic/cocotb/run.sh (generates the RTL first), or:
     make -C tb/mosaic/cocotb SIM=verilator
@@ -29,6 +35,10 @@ CORES = [
     ("qerv  (W=4)", "sentinel1", "alive1", "sleep1", 1),
     ("fazyrv     ", "sentinel2", "alive2", "sleep2", 2),
 ]
+# Hart 0 is released at reset by the testbench bootstrap; 1 and 2 are the
+# genuinely dormant workers this test gates on.
+BOOTSTRAPPED = CORES[0]
+DORMANT = CORES[1:]
 
 
 def _sent(dut, sig):
@@ -59,7 +69,22 @@ async def multicore_wake_loop(dut):
 
     dut._log.info("=== Phase 1: dormant out of reset (no wake) ===")
     failures = 0
-    for name, sent_sig, alive_sig, sleep_sig, _ in CORES:
+
+    # Hart 0 is expected to be RUNNING: no TITAN in this config + the testbench
+    # profile releases it so something can drive the first dispatch.
+    name, sent_sig, alive_sig, sleep_sig, _ = BOOTSTRAPPED
+    alive = int(getattr(dut, alive_sig).value)
+    slp = int(getattr(dut, sleep_sig).value)
+    sval = _sent(dut, sent_sig)
+    boot_ok = alive == 1 and slp == 0
+    dut._log.info(
+        f"hart {name}: alive={alive} sleep={slp} sentinel=0x{sval:08x} "
+        f"{'PASS (testbench bootstrap)' if boot_ok else 'FAIL (bootstrap hart did not run!)'}"
+    )
+    if not boot_ok:
+        failures += 1
+
+    for name, sent_sig, alive_sig, sleep_sig, _ in DORMANT:
         alive = int(getattr(dut, alive_sig).value)
         slp = int(getattr(dut, sleep_sig).value)
         sval = _sent(dut, sent_sig)
@@ -72,31 +97,32 @@ async def multicore_wake_loop(dut):
             failures += 1
     assert failures == 0, "a worker executed before being woken — gating is broken"
 
-    # ── Phase 2: wake hart 0 only ──────────────────────────────────────────
-    dut._log.info("=== Phase 2: wake hart 0 only (selective) ===")
+    # ── Phase 2: wake hart 1 only ──────────────────────────────────────────
+    # The selective-wake proof lives here, on a hart that really was dormant.
+    dut._log.info("=== Phase 2: wake hart 1 only (selective) ===")
     # A one-cycle pulse is enough — cpu_subsystem latches it.
-    dut.core_wake.value = 0b001
+    dut.core_wake.value = 0b010
     await ClockCycles(dut.clk_i, 2)
     dut.core_wake.value = 0b000
-    await _run_until_executed(dut, 0b001)
+    await _run_until_executed(dut, 0b010)
 
-    h0 = CORES[0]
-    assert int(getattr(dut, h0[2]).value) == 1, "hart 0 did not wake"
-    assert _sent(dut, h0[1]) == SENTINEL, "hart 0 woke but did not execute"
-    assert int(getattr(dut, h0[3]).value) == 0, "hart 0 still reports sleep"
-    # The other two must still be parked.
-    for name, sent_sig, alive_sig, sleep_sig, _ in CORES[1:]:
-        assert int(getattr(dut, alive_sig).value) == 0, f"{name} woke unexpectedly"
-        assert _sent(dut, sent_sig) != SENTINEL, f"{name} executed unexpectedly"
-        assert int(getattr(dut, sleep_sig).value) == 1, f"{name} not parked"
-    dut._log.info("hart 0 ran; harts 1,2 still parked — per-hart wake confirmed")
+    h1 = CORES[1]
+    assert int(getattr(dut, h1[2]).value) == 1, "hart 1 did not wake"
+    assert _sent(dut, h1[1]) == SENTINEL, "hart 1 woke but did not execute"
+    assert int(getattr(dut, h1[3]).value) == 0, "hart 1 still reports sleep"
+    # Hart 2 must still be parked — one wake bit must not release its neighbour.
+    name, sent_sig, alive_sig, sleep_sig, _ = CORES[2]
+    assert int(getattr(dut, alive_sig).value) == 0, f"{name} woke unexpectedly"
+    assert _sent(dut, sent_sig) != SENTINEL, f"{name} executed unexpectedly"
+    assert int(getattr(dut, sleep_sig).value) == 1, f"{name} not parked"
+    dut._log.info("hart 1 ran; hart 2 still parked — per-hart wake confirmed")
 
     # ── Phase 3: wake the rest ─────────────────────────────────────────────
     dut._log.info("=== Phase 3: wake remaining harts ===")
-    dut.core_wake.value = 0b110
+    dut.core_wake.value = 0b100
     await ClockCycles(dut.clk_i, 2)
     dut.core_wake.value = 0b000
-    await _run_until_executed(dut, 0b110)
+    await _run_until_executed(dut, 0b100)
 
     dut._log.info("=== Final state ===")
     failures = 0

@@ -64,8 +64,7 @@ It is built on EPFL's [X-HEEP](#built-on-x-heep) single-core MCU, extended into 
 32 KB SRAM, 2 KB boot ROM, UART/GPIO/timer/SPI, TDU, iDMA — targeting **1.249 mm²** on
 GF180MCU once the physical inputs listed in section 9 are available.
 
-> This
-> README is the practical user guide.
+> This README is the practical user guide.
 
 > New to the project? Follow the **[hands-on tutorial](tutorial/README.md)** for a
 > small YAML → RTL → all-hart simulation example, followed by deterministic and
@@ -301,6 +300,18 @@ causes confusing errors.
 
 All simulations use **Verilator**. Each runner generates the RTL it needs, builds, runs,
 and restores the default config — so they're self-contained.
+
+**To run everything at once:**
+
+```bash
+scripts/run_sweep.sh              # all 33 suites, ~42 min, non-zero if any fail
+scripts/run_sweep.sh --list       # just the step names
+scripts/run_sweep.sh --only wake  # steps matching a regex
+```
+
+It checks a success _marker_ as well as the exit status — several runners exit 0 while
+printing a failure — and reports anything `--only` excluded, so a partial run can never
+read as a full one. Logs land in `build/sweep/`.
 
 ### 8.1 Full-SoC TDU wake-and-run demo ✅ (the headline test)
 
@@ -692,11 +703,17 @@ env vars to the `tb/mosaic_soc` scripts.
 - ✅ **Full-SoC functional sim passes** — single-core boot-and-run, **and the 3-core TDU
   wake-and-run demo reaches `EXIT SUCCESS`** (TITAN wakes ATLAS + NANO; each runs its own
   program and writes its sentinel). Validated against the cocotb regression too.
-- ✅ **All 12 cores sim-verified in the full SoC** — PicoRV32, Snitch, and CVA6 each reach
-  `EXIT SUCCESS` in the TDU wake demo, plus a combined config (CVA6 TITAN + Snitch + PicoRV32),
-  an all-TITAN 4-core SMP demo (2× cv32e20 + 2× cv32e40x) across all three bus fabrics,
-  the Berkeley RV64 tiles (Rocket, BOOM v3, and both together) behind the TL→OBI window
-  bridge, and Hazard3 (AHB-Lite) integrated end-to-end by the Phase-2 wrapper mechanism.
+- ✅ **10 of the 14 catalog cores run in the full-SoC testbench** — cv32e20, cv32e40x,
+  FazyRV, SERV, PicoRV32, Snitch, CVA6, Hazard3, Rocket and BOOM v3 each reach
+  `EXIT SUCCESS` through `tb/mosaic_soc/`, including a combined config (CVA6 TITAN +
+  Snitch + PicoRV32), an all-TITAN 4-core SMP demo (2× cv32e20 + 2× cv32e40x) across all
+  three bus fabrics, the Berkeley RV64 tiles (Rocket, BOOM v3, and both together) behind
+  the TL→OBI window bridge, and Hazard3 (AHB-Lite) integrated end-to-end by the Phase-2
+  wrapper mechanism. **QERV** is exercised one level down, in the multi-core
+  `cpu_subsystem` TB (`tb/mosaic/`) and the LIC fabric TB, not through the full-SoC top.
+  The remaining three are honest gaps, not oversights: **Ibex** appears only in
+  `mosaic_all_cores.yaml`, which is a _render_ acceptance test, and **cv32e40p /
+  cv32e40px** have no shipped config at all — they are generator-supported and unproven.
 - ✅ **Full regression green** under pinned Verilator 5.050 (unit/SoC TDU, iDMA,
   log-xbar, FlooNoC, SCI cocotb, TL→OBI bridge, 11 wake demos, 3 all-TITAN SMP, production
   firmware, the no-LLM prompt→SoC pipeline, tb-smith single-hart TBs, and generator pytest).
@@ -904,7 +921,7 @@ Where LLMs actually plug in, and what checks each one:
 The meta-level is the same story: the platform itself is developed in
 LLM-driven sessions (the Phase-2 harness, the Hazard3 integration, and
 tb-matrix were built this way), but every contribution lands as
-deterministic, pytest-guarded code — 661 tests at last count. The one-liner:
+deterministic, pytest-guarded code — 672 tests at last count. The one-liner:
 **LLMs make the generator easier to drive and faster to extend; determinism
 makes what they produce trustworthy.**
 
@@ -915,7 +932,7 @@ Full detail: [`harness/README.md`](harness/README.md),
 
 ## 14. Extending the SoC
 
-**Add a new core** :
+**Add a new core** (summary):
 
 1. Study the core in `refs/IP_Cores_Catalog/<core>/` (bus, params, HDL).
 2. Write `hw/sci/<core>_sci.sv` presenting OBI 1.3 I+D ports.

@@ -51,6 +51,29 @@ def _progress(kind: str, message: str, **details):
     )
 
 
+def external_agent_prompt(driver: str, text: str) -> str:
+    """The system framing handed to an external agent harness.
+
+    Public because `demo/03_blocka_from_prompt.sh` drives `claude -p` with the
+    very same string: a demo that invented its own prompt would be evidence
+    about the demo, not about the surface a user actually gets from
+    `oh-my-soc agent`.
+    """
+    if driver == "omp":
+        tool_clause = ("use the oh_my_soc tool for every MOSAIC action, react "
+                       "to each gate result")
+    elif driver == "claude":
+        tool_clause = ("invoke python3 -m harness commands as separate visible "
+                       "Bash tool calls, react to each JSON result")
+    else:
+        raise ValueError(driver)
+    return (
+        "Act as the MOSAIC-SoC agent. Read the project .claude/skills cards, "
+        f"make an explicit plan, {tool_clause}, and do not claim success "
+        f"without deterministic evidence. User request: {text}"
+    )
+
+
 def _external_agent_command(
     driver: str, binary: str, prompt: str, *, interactive: bool
 ) -> list[str]:
@@ -91,6 +114,35 @@ def _print_result(result: SkillResult, verbose: bool = False):
         sys.exit(1)
 
 
+def _parse_kv_extras(blob: str, *, what: str) -> dict:
+    """`k=v,k=v` → dict, with the ints and bools YAML would have produced.
+
+    Used for `--core` extras and `--platform`. A malformed pair is an error
+    rather than a silently dropped field: a knob that vanishes here would show
+    up as a silently different SoC.
+    """
+    out: dict = {}
+    for pair in blob.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise ValueError(f"{what}: expected key=value, got {pair!r}")
+        key, _, value = pair.partition("=")
+        key, value = key.strip(), value.strip()
+        if value.lower() in ("true", "false"):
+            out[key] = value.lower() == "true"
+        else:
+            try:
+                # base 0, so `0x40010000` lands as the int the schema wants.
+                # A boot_addr left as a string compares unequal to an
+                # otherwise identical config and reads as a real difference.
+                out[key] = int(value, 0)
+            except ValueError:
+                out[key] = value
+    return out
+
+
 def cmd_config_author(args):
     from .skills.config_author import ConfigAuthor
     author = ConfigAuthor()
@@ -99,15 +151,39 @@ def cmd_config_author(args):
         cores = []
         if args.core:
             for c in args.core:
+                # ip[:count[:role[:k=v,k=v]]] — the trailing extras carry
+                # isa/with_csr/compressed/boot_addr, which are what separate
+                # e.g. the Block A TITAN (rv32ic, CSRs) from its worker.
                 parts = c.split(":")
+                extras = {}
+                if len(parts) >= 4 and parts[3]:
+                    try:
+                        extras = _parse_kv_extras(parts[3], what=f"--core {c!r}")
+                    except ValueError as exc:
+                        _print_result(SkillResult(
+                            ok=False, skill="config-author",
+                            summary="bad --core extras", errors=[str(exc)]))
+                        return
                 if len(parts) >= 3:
-                    cores.append({"ip": parts[0], "count": int(parts[1]), "role": parts[2]})
+                    core = {"ip": parts[0], "count": int(parts[1]), "role": parts[2]}
                 elif len(parts) == 2:
-                    cores.append({"ip": parts[0], "count": int(parts[1]), "role": "nano"})
+                    core = {"ip": parts[0], "count": int(parts[1]), "role": "nano"}
                 else:
-                    cores.append({"ip": parts[0], "count": 1, "role": "nano"})
+                    core = {"ip": parts[0], "count": 1, "role": "nano"}
+                core.update(extras)
+                cores.append(core)
 
         peripherals = args.peripheral.split(",") if args.peripheral else []
+
+        platform = {}
+        for blob in args.platform or []:
+            try:
+                platform.update(_parse_kv_extras(blob, what="--platform"))
+            except ValueError as exc:
+                _print_result(SkillResult(
+                    ok=False, skill="config-author",
+                    summary="bad --platform value", errors=[str(exc)]))
+                return
 
         result = author.generate(
             name=args.name,
@@ -123,6 +199,8 @@ def cmd_config_author(args):
             target=args.target,
             preset=args.preset,
             output_path=Path(args.output) if args.output else None,
+            scratchpad_bytes=args.scratchpad_bytes,
+            platform=platform or None,
         )
         _print_result(result, verbose=True)
 
@@ -315,20 +393,7 @@ def cmd_agent(args):
             )
             _print_result(result, verbose=True)
             return
-        if driver == "omp":
-            prompt = (
-                "Act as the MOSAIC-SoC agent. Read the project .claude/skills cards, "
-                "make an explicit plan, use the oh_my_soc tool for every MOSAIC "
-                "action, react to each gate result, and do not claim success "
-                f"without evidence. User request: {text}"
-            )
-        else:
-            prompt = (
-                "Act as the MOSAIC-SoC agent. Read the project .claude/skills cards, "
-                "make an explicit plan, invoke python3 -m harness commands as separate "
-                "visible Bash tool calls, react to each JSON result, and do not claim "
-                f"success without deterministic evidence. User request: {text}"
-            )
+        prompt = external_agent_prompt(driver, text)
         interactive = (
             sys.stdin.isatty()
             and sys.stdout.isatty()
@@ -554,7 +619,11 @@ def main():
 
     ca_gen = ca_sub.add_parser("generate", help="Generate a config")
     ca_gen.add_argument("--name", default="mosaic_soc", help="SoC name")
-    ca_gen.add_argument("--core", action="append", help="Core spec: ip:count:role (repeatable)")
+    ca_gen.add_argument(
+        "--core", action="append",
+        help="Core spec: ip:count:role[:k=v,k=v] (repeatable). Extras carry "
+             "isa/with_csr/compressed/boot_addr, e.g. "
+             "serv:1:titan:isa=rv32ic,with_csr=1,compressed=1")
     ca_gen.add_argument("--sram", type=int, default=32, help="SRAM KB")
     ca_gen.add_argument("--boot-rom", type=int, default=2, help="Boot ROM KB")
     ca_gen.add_argument("--bus", choices=("obi", "log", "floonoc"), default="obi")
@@ -572,6 +641,16 @@ def main():
     ca_gen.add_argument("--peripheral", help="Comma-separated peripherals")
     ca_gen.add_argument("--preset", help="Use a named preset")
     ca_gen.add_argument("--output", help="Output path")
+    ca_gen.add_argument(
+        "--scratchpad-bytes", type=int, default=None,
+        help="Flip-flop scratchpad size. Required reading for a part with "
+             "sram_kb: 0 — it is where the shared-control window lives")
+    ca_gen.add_argument(
+        "--platform", action="append", metavar="K=V",
+        help="Selectable platform blocks as key=value, comma-separated or "
+             "repeated: debug, plic, spi_mode, multicore_timer, gpio_ao, "
+             "ao_rv_timer, ao_fast_intr, dma. Omitted keys keep generator "
+             "defaults")
 
     ca_val = ca_sub.add_parser("validate", help="Validate a config file")
     ca_val.add_argument("file", help="Path to mosaic.yaml")
