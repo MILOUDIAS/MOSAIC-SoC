@@ -22,6 +22,15 @@ filesets:
       - pulp-platform.org::common_cells:1.38.0
       - pulp-platform.org::fpnew
       - pulp-platform.org::tech_cells_generic
+      # cva6_sci.sv bridges CVA6's native AXI4 to OBI with
+      # xheep_axi_burst_to_obi, on EVERY bus -- CVA6 has no OBI port. This
+      # dependency used to be reachable only through core-v-mini-mcu's
+      # `files_rtl_floonoc` fileset, i.e. only when bus == floonoc, so
+      # `bus: obi` builds died with MODMISSING on the bridge. The need belongs
+      # to the core that has it, not to the fabric: mosaic:ip:berkeley
+      # declares mosaic:ip:tl_obi the same way, which is why Rocket/BOOM
+      # always worked.
+      - mosaic:ip:axi_obi
     files:
       - core/include/config_pkg.sv
       - core/include/cv32a6_mosaic_config_pkg.sv

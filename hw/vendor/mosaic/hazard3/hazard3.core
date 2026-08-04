@@ -13,6 +13,28 @@ description: "Hazard3 (RP2350 core) — RV32IMC, 2-port AHB-Lite; wrapper-smith 
 filesets:
   core:
     files:
+      # Headers FIRST, and declared -- every rtl/*.v `include`s these. They
+      # were missing entirely, so FuseSoC never copied them into build/src and
+      # the full-SoC elaboration died with "Cannot find include file:
+      # 'hazard3_config.vh'". The standalone TB hid it: tb_smith adds the
+      # include path itself, so tb/sci/hazard3 passed while the SoC build did
+      # not. is_include_file also puts rtl/ on the +incdir+ path.
+      - rtl/hazard3_config.vh:
+          is_include_file: true
+      - rtl/hazard3_config_inst.vh:
+          is_include_file: true
+      - rtl/hazard3_ops.vh:
+          is_include_file: true
+      - rtl/hazard3_width_const.vh:
+          is_include_file: true
+      - rtl/hazard3_csr_addr.vh:
+          is_include_file: true
+      - rtl/rv_opcodes.vh:
+          is_include_file: true
+      - rtl/hazard3_rvfi_monitor.vh:
+          is_include_file: true
+      - rtl/hazard3_rvfi_standalone_defs.vh:
+          is_include_file: true
       - rtl/arith/hazard3_alu.v
       - rtl/arith/hazard3_branchcmp.v
       - rtl/arith/hazard3_mul_fast.v
