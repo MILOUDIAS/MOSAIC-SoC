@@ -14,7 +14,7 @@
 project:
   title: "MOSAIC-SoC"
   team: "JustVibeAndTapeout"
-  discord: "@MILOUDIAS, @trabdelbasset, @yacine-hk"
+  discord: "MILOUDIAS, kewenlee, yassinehk"
   description: "Config-to-GDSII generator for heterogeneous multi-core RISC-V SoCs, driven by an LLM agent, targeting the GF180MCU open PDK"
   lvs_config: "lvs_config.json"
 
