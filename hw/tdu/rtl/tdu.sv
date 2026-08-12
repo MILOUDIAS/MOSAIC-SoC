@@ -11,11 +11,11 @@
 //     is enqueued with its core_hint, or by explicit software request)
 //   - a per-core CPI estimate array (software-updated, read by the scheduler)
 //   - a core status mirror (running/sleep) sampled from each SCI wrapper
-//   - an energy accumulator (active cores x cycles proxy)
+//   - an active-hart-cycles accumulator (workload proxy, NOT energy)
 //   - a scheduling-mode register (static / dynamic / power-aware)
 //
 // Placement policy intentionally runs on TITAN: the TDU records the selected
-// mode and supplies CPI/energy telemetry, while every descriptor carries the
+// mode and supplies CPI/activity telemetry, while every descriptor carries the
 // final concrete hart chosen by software.  The hardware never silently
 // rewrites core_hint.
 //
@@ -64,8 +64,9 @@ module tdu #(
   // ── Register storage ────────────────────────────────────────────
   sched_mode_e          sched_mode_q, sched_mode_d;
   logic [NUM_HARTS-1:0] wake_mask_q, wake_mask_d;
-  logic [31:0]          energy_counter_q;
-  logic                 energy_clear;
+  logic [31:0]          active_hart_cycles_q;
+  logic                 active_hart_cycles_clear;
+  logic [32:0]          active_hart_cycles_sum;
   logic [31:0]          cpi_est_q [CpiWords];
   logic [31:0]          cpi_est_d [CpiWords];
   logic                 cpi_we [CpiWords];
@@ -81,6 +82,11 @@ module tdu #(
 
   assign full  = (count_q == CountFull);
   assign empty = (count_q == 0);
+
+  // 33-bit sum so the carry out of bit 31 is visible and the accumulator can
+  // saturate instead of wrapping (see the always_ff below).
+  assign active_hart_cycles_sum =
+      {1'b0, active_hart_cycles_q} + 33'($countones(core_running_i));
 
   // ── Bus request decode ──────────────────────────────────────────
   // The reg bus delivers word-aligned addresses in reg_req_i.addr. Only
@@ -117,7 +123,7 @@ module tdu #(
     ready_d        = 1'b0;
     sched_mode_d   = sched_mode_q;
     wake_mask_d    = wake_mask_q;
-    energy_clear   = 1'b0;
+    active_hart_cycles_clear = 1'b0;
     push           = 1'b0;
     pop            = 1'b0;
     push_data      = task_desc_t'('0);
@@ -222,12 +228,12 @@ module tdu #(
             else rdata_d = {26'h0, full, empty, count_q[3:0]};
           end
 
-          TDU_ENERGY_COUNTER_OFFSET: begin
+          TDU_ACTIVE_HART_CYCLES_OFFSET: begin
             if (req_write) begin
               // Write clears the counter (read-to-clear alternative)
-              energy_clear = 1'b1;
+              active_hart_cycles_clear = 1'b1;
             end else begin
-              rdata_d = energy_counter_q;
+              rdata_d = active_hart_cycles_q;
             end
           end
 
@@ -273,17 +279,30 @@ module tdu #(
     if (!rst_ni) begin
       sched_mode_q     <= RESET_SCHED_MODE;
       wake_mask_q      <= '0;
-      energy_counter_q <= '0;
+      active_hart_cycles_q <= '0;
     end else begin
       sched_mode_q     <= sched_mode_d;
       wake_mask_q      <= wake_mask_d;
-      // Energy accumulator: increment by the number of running cores each
-      // cycle (energy proxy = active cores x time). A write to the
-      // ENERGY_COUNTER register clears it. Saturates at 2^32.
-      if (energy_clear) begin
-        energy_counter_q <= '0;
+      // ACTIVE-HART-CYCLES accumulator: increment by the number of running
+      // harts each cycle, i.e. sum over time of the active-hart count.
+      //
+      // This is a WORKLOAD proxy, NOT energy. It weights every hart equally,
+      // so one cycle of a bit-serial SERV and one cycle of a BOOM contribute
+      // the same 1. Converting it to joules would need per-core, per-state
+      // characterised weights that this design does not have; reporting it as
+      // energy would be a fabricated number.
+      //
+      // SATURATES at 2^32-1 rather than wrapping. The previous comment claimed
+      // saturation while the implementation did plain 32-bit addition, so a
+      // long run silently wrapped and a huge workload could read as a small
+      // one. A saturated value is honest ("at least this much"); a wrapped one
+      // is wrong. A write to the register clears it.
+      if (active_hart_cycles_clear) begin
+        active_hart_cycles_q <= '0;
       end else begin
-        energy_counter_q <= energy_counter_q + $countones(core_running_i);
+        active_hart_cycles_q <= active_hart_cycles_sum[32]
+                              ? {32{1'b1}}
+                              : active_hart_cycles_sum[31:0];
       end
     end
   end

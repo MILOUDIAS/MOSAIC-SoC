@@ -436,9 +436,24 @@ def resolved_manifest(
             "num_harts": xheep.num_harts(),
             "is_multi_core": xheep.is_multi_core(),
             "cores": groups,
+            # The selectable platform blocks. Without these the manifest cannot
+            # distinguish the hardened Block A design from one that still
+            # carries a debug module, a PLIC or a DMA -- so the physical
+            # attestation could not tell them apart either.
+            "platform": {
+                "dma": mosaic_cfg.dma,
+                "debug": mosaic_cfg.debug,
+                "plic": mosaic_cfg.plic,
+                "spi_mode": mosaic_cfg.spi_mode,
+                "multicore_timer": mosaic_cfg.multicore_timer,
+                "gpio_ao": mosaic_cfg.gpio_ao,
+                "ao_rv_timer": mosaic_cfg.ao_rv_timer,
+                "ao_fast_intr": mosaic_cfg.ao_fast_intr,
+            },
             "memory": {
                 "declared_sram_kb": mosaic_cfg.memory.sram_kb,
                 "declared_boot_rom_kb": mosaic_cfg.memory.boot_rom_kb,
+                "declared_scratchpad_bytes": mosaic_cfg.memory.scratchpad_bytes,
                 "resolved_sram_bytes": xheep.memory_ss().ram_size_address(),
                 "resolved_banks": xheep.memory_ss().ram_numbanks(),
                 "resolved_interleaved_banks": xheep.memory_ss().ram_numbanks_il(),

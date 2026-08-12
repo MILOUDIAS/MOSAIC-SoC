@@ -25,6 +25,7 @@
 7. [Generate the SoC RTL](#7-generate-the-soc-rtl)
 8. [Run the simulations & tests](#8-run-the-simulations--tests)
 9. [RTL → GDSII hardening (GF180MCU)](#9-rtl--gdsii-hardening-gf180mcu)
+   9a. [Tapeout candidate — `mosaic_tapeout_ultra` (Chipathon Block A)](#9a-tapeout-candidate--mosaic_tapeout_ultra-chipathon-block-a)
 10. [Config reference](#10-config-reference)
 11. [Project status](#11-project-status)
 12. [Using the agentic harness (oh-my-soc)](#12-using-the-agentic-harness-oh-my-soc)
@@ -62,6 +63,8 @@ It is built on EPFL's [X-HEEP](#built-on-x-heep) single-core MCU, extended into 
 **Proof-of-concept SoC:** 1× cv32e20 (TITAN) + 2× FazyRV-CHUNK8 (ATLAS) + 4× SERV (NANO),
 32 KB SRAM, 2 KB boot ROM, UART/GPIO/timer/SPI, TDU, iDMA — targeting **1.249 mm²** on
 GF180MCU once the physical inputs listed in section 9 are available.
+
+> This README is the practical user guide.
 
 > New to the project? Follow the **[hands-on tutorial](tutorial/README.md)** for a
 > small YAML → RTL → all-hart simulation example, followed by deterministic and
@@ -149,6 +152,8 @@ soc:
 
   bus: obi # Open Bus Interface
 
+  dma: idma # idma | none
+
   scheduler:
     tdu: true # Task Dispatch Unit
     mode: dynamic # static | dynamic | power-aware
@@ -159,6 +164,7 @@ soc:
 | Field                     | Drives                                                                                                                                                                                                                                       |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cores[].ip`              | which core IP + its SCI wrapper + FuseSoC dependency                                                                                                                                                                                         |
+| `dma`                     | `idma` (default) instantiates the pulp-platform iDMA; `none` omits it entirely — measured 0.355 mm² / 9.1% of the minimum-area SoC (the 0.319 mm² engine plus 4 crossbar masters). `xheep` is reserved and rejected on multi-core configs    |
 | `cores[].count`           | how many copies (each gets its own OBI ports, hart_id, debug, wake)                                                                                                                                                                          |
 | `cores[].role`            | tier → interrupt routing, clock-gate policy, TDU priority (`titan` boots immediately; workers boot dormant)                                                                                                                                  |
 | `cores[].*`               | extra fields (e.g. `chunksize`, `boot_addr`, `memdly1`) → per-core params                                                                                                                                                                    |
@@ -204,6 +210,7 @@ tb/                         # testbenches (see §8)
   idma/                     #   iDMA cocotb tests
   tdu/                      #   TDU SoC-level cocotb test
 flow/librelane/             # RTL→GDSII hardening flow for GF180MCU
+  scripts/gen_filelist.py   #   resolves VERILOG_FILES from the FuseSoC manifest at run time
 scripts/                    # build/sim/synth helpers (fusesoc-setup.sh, ...)
 refs/                       # READ-ONLY reference IPs (cores, interconnects, SoCs, tools + oh-my-pi)
 ```
@@ -293,6 +300,18 @@ causes confusing errors.
 
 All simulations use **Verilator**. Each runner generates the RTL it needs, builds, runs,
 and restores the default config — so they're self-contained.
+
+**To run everything at once:**
+
+```bash
+scripts/run_sweep.sh              # all 33 suites, ~42 min, non-zero if any fail
+scripts/run_sweep.sh --list       # just the step names
+scripts/run_sweep.sh --only wake  # steps matching a regex
+```
+
+It checks a success _marker_ as well as the exit status — several runners exit 0 while
+printing a failure — and reports anything `--only` excluded, so a partial run can never
+read as a full one. Logs land in `build/sweep/`.
 
 ### 8.1 Full-SoC TDU wake-and-run demo ✅ (the headline test)
 
@@ -483,34 +502,183 @@ make classic PHYSICAL_BUNDLE=/abs/path/to/bundle
 
 > Status: the GF180 pad frame elaborates clean, but this repository does not yet contain a
 > bound `mosaic_soc_core` or qualified 32-KiB SRAM bundle. Consequently `make harden`
-> fails before LibreLane unless those real inputs are supplied; no DRC/LVS-clean result is
-> currently claimed.
+> fails before LibreLane unless those real inputs are supplied, and **no attested**
+> DRC/LVS-clean result is claimed for this chip-level path.
+> The **Block A macro** in §9a is a different target: it needs no pad ring or SRAM bundle,
+> and it _is_ DRC/LVS clean — but it runs outside this attestation gate, so that result is
+> evidence about the layout rather than a qualified tapeout input.
 > See [`flow/librelane/README.md`](flow/librelane/README.md).
+
+---
+
+## 9a. Tapeout candidate — `mosaic_tapeout_ultra` (Chipathon Block A)
+
+The part intended for the Chipathon MPW submission. It is a **hard macro, not a chip**:
+the shared pad ring belongs to the MPW integrator, so this block's pin list _is_ its
+interface. See [`docs/padrinrg/padring_proposal.jpg`](docs/padrinrg/padring_proposal.jpg)
+for the shared-die plan — 88 pins over 2235 × 2235 µm, split into 5 block sizes; MOSAIC
+takes **Block A**, a quarter of the area with a 22-pin budget.
+
+### The configuration
+
+```yaml
+# configs/mosaic_tapeout_ultra.yaml
+soc:
+  cores: # 2x SERV, one TITAN + one worker
+    - { ip: serv, role: titan, isa: rv32ic, with_csr: 1, compressed: 1 }
+    - { ip: serv, role: atlas, isa: rv32i, boot_addr: 0x40010000, with_csr: 0 }
+  memory: { sram_kb: 0, scratchpad_bytes: 128, boot_rom_kb: 1 }
+  dma: none # no bulk-copy engine
+  debug: false # NO JTAG — bring-up is boot-ROM only
+  plic: false # no external peripheral interrupt reaches a hart
+  spi_mode: xip_only # read-only XIP reader, no SPI host
+  peripherals: [uart]
+  multicore_timer: false # mosaic_clint serves per-hart timers
+  gpio_ao: false
+  ao_rv_timer: false
+  ao_fast_intr: false
+  scheduler: { tdu: true, mode: dynamic } # the TDU is what releases the worker
+```
+
+Every one of those knobs was measured, not guessed; the derivation is in
+[`docs/area_study_gf180_min_soc.md`](docs/area_study_gf180_min_soc.md) §8c–§8g.
+
+### Block A macro — 22 pins
+
+`flow/librelane/experimental/mosaic_block_a.sv` wraps `core_v_mini_mcu` and terminates
+its other 251 ports internally (unused inputs tied to constants; unused outputs omitted
+so synthesis prunes the logic that drove them).
+
+| Dir    | Count | Pins                                                                                |
+| ------ | ----: | ----------------------------------------------------------------------------------- |
+| input  |     5 | `clk_i`, `rst_ni`, `boot_select_i`, `execute_from_flash_i`, `uart_rx_i`             |
+| output |    11 | `spi_flash_sck_o`, `spi_flash_cs_o`, `uart_tx_o`, `status_valid_o`, `status_o[6:0]` |
+| inout  |     6 | `spi_flash_sd_io[3:0]`, `VDD`, `VSS`                                                |
+
+`status_o[6:0]` is driven from `soc_ctrl`'s exit register. With `debug: false` and no
+JTAG it is the **only** observability this part has — it must be bonded, not tied off.
+
+### Signoff run — nothing skipped
+
+Two configs harden this block. `config_blocka.yaml` skips the verification decks to keep
+the area loop short; **`config_blocka_signoff.yaml` runs all of them** — Magic DRC,
+KLayout DRC, Magic SPICE extraction, Netgen LVS, KLayout XOR, antenna, and IR drop — and
+any of them can fail the flow.
+
+```bash
+make mosaic-gen MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml   # generate the RTL first
+cd flow/librelane
+./experimental/run_signoff.sh          # hours, not minutes
+```
+
+The runner greps its own config for `substituting_steps` / `: null` and **aborts** rather
+than let a signoff run quietly become a partial one, and it reports through
+`harness/evidence/librelane.py`, which will not call a missing report clean.
+
+Neither config carries an absolute path. `flow/librelane/scripts/gen_filelist.py` resolves
+`VERILOG_FILES`/`VERILOG_INCLUDE_DIRS` from the FuseSoC manifest at run time — the same
+thing `tb/mosaic_soc/gen_filelist.py` has always done for the sim flows — and the runner
+merges the result into a run-local copy of the config, so a fresh clone hardens without
+editing anything. If the RTL has not been generated the runner **stops**: the dangerous
+failure was never a missing file but a path that still _resolved_, to an older bundle,
+hardening stale RTL and reporting it clean. The generated list reproduces the previous
+hand-maintained one exactly (507/507 files) and re-synthesises to the same 854 954 µm² /
+33 852 cells; `test/test_x_heep_gen/test_librelane_filelist.py` fails the build if a config
+ever regains an absolute path.
+
+### Measured result (2026-08-01, signoff run)
+
+GF180MCU `gf180mcu_fd_sc_mcu7t5v0`, LibreLane 3.0.0 Classic flow, no `--skip`:
+
+|                                      |                                                              Value |
+| ------------------------------------ | -----------------------------------------------------------------: |
+| die                                  |     **1117.5 × 1117.5 µm = 1.2488 mm²** (exactly the Block A slot) |
+| utilization                          |                                                              84.4% |
+| standard cells                       |                                                             44 355 |
+| **Magic DRC**                        |                                                              **0** |
+| **KLayout DRC**                      |                                                              **0** |
+| **Netgen LVS**                       | **0** — _"Circuits match uniquely"_, 0 unmatched devices/nets/pins |
+| **KLayout↔Magic XOR**               |                                                  **0 differences** |
+| routing DRC                          |                       **0** (both antenna-repair passes converged) |
+| antenna violations                   |                                                              **0** |
+| illegal overlaps / disconnected pins |                                                          **0 / 0** |
+| power-grid violations                |                                                **0** (VDD and VSS) |
+| worst IR drop                        |                                                  **120 µV** on 5 V |
+| worst setup slack                    |                                                      **+20.86 ns** |
+| worst hold slack                     |                                                      **+0.066 ns** |
+| setup / hold TNS                     |                                          0 / 0 at all nine corners |
+| **max-capacitance violations**       |                                                              **0** |
+| **max-fanout violations**            |                                                              **1** |
+| max-slew violations                  |                   **591** (against the library's own 4.0 ns limit) |
+
+LVS matched the 22-pin contract above pin-for-pin against _extracted layout_, rather than
+taking the wrapper's port list on trust. Functionally verified at RTL:
+`### RESULT: EXIT SUCCESS — all 2 configured harts executed ✓`, plus a UART bring-up test
+(`MOSAIC_CFG=… tb/mosaic_soc/run_uart.sh`) that measures the TX FIFO depth, compares polled
+transmission against the UART DPI log, and exercises RX through loopback — written because
+the area work had cut both UART FIFOs from 32 to 4 entries and nothing tested the result.
+
+Artifacts: [`flow/librelane/experimental/runs/blocka_signoff/final/`](flow/librelane/experimental/runs/blocka_signoff/final/)
+— gds, lef, lib (9 corners), nl/pnl, sdc, odb, and the extracted spice netlist LVS
+compared against.
+
+### ⚠️ What is still open
+
+DRC and LVS are clean; that is not the same as tapeout-ready.
+
+- **591 max-slew violations**, worst 5.19 ns against the 4.0 ns every cell in this library
+  declares. Down from 2 889; max-cap and max-fanout are effectively closed (0 and 1). Most
+  of the original count was an artifact of measuring against a blanket 3 ns / 0.2 pF
+  constraint _tighter than the library's own limits_ — the 0.2 pF cap limit sat below even
+  the weakest clock buffer's rating. The remainder are real and need per-net attention, not
+  another global knob: upsizing the QSPI pad drivers to `bufz_8` was measured and made
+  things **worse** (785 slew, 9.51 ns worst), because those pads are input-slew limited.
+  No DRC or LVS deck looks at these, and setup/hold closing does not imply them: at
+  `CLOCK_PERIOD: 100` the resizer has ~21 ns of slack and so no timing pressure to repair
+  transitions. This is the last known gap between this macro and a submittable one.
+- **Timing-annotated gate-level simulation is unavailable with open tools.** Functional GLS
+  on the routed netlist passes (`tb/gls/run_gls.sh`), but SDF back-annotation is blocked:
+  the PDK cell models use `ifnone` on edge-sensitive specify paths, which IEEE 1364-2005
+  §14.2.6 forbids and both iverilog and CVC reject, and CVC then segfaults on a netlist
+  this size. Timing coverage is STA's, at nine corners.
+- **The run bypasses the `PHYSICAL_BUNDLE` attestation gate** (see §9), so a clean result
+  here is evidence about the layout, not a qualified tapeout input.
+- `bufz_4` drive strength on the QSPI pins is a placeholder pending the integrator's pad
+  loading, and `status_o[6:0]` must be bonded.
+- Hold margin is **+66 ps**. Positive at every corner, but thin — it was bought by
+  lowering `PL_RESIZER_HOLD_SLACK_MARGIN` to trade hold margin for area. Anyone tightening
+  the clock should re-check it first.
+
+Getting here cost three bugs, including one (`soc_ctrl` reads returning `error=1,
+rdata=0`) that was introduced by an earlier fix, shipped in a previously committed GDS,
+and was masked by `ERROR_ON_SYNTH_CHECKS: false`. See the
+[bug tracker](DASHBOARD.md#7-bug-tracker-all-fixed), entries 28–30.
 
 ---
 
 ## 10. Config reference
 
-| Config                                        | Cores                                                         | Used by                                                                |
-| --------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `mosaic.yaml`                                 | **PoC:** 1× cv32e20 + 2× fazyrv + 4× serv                     | default for `make mosaic-gen`, the GDS flow                            |
-| `configs/mosaic_wake_demo.yaml`               | 1× cv32e20 + 1× fazyrv + 1× serv (per-core boot addr)         | `tb/mosaic_soc/run.sh` (§8.1)                                          |
-| `configs/mosaic_sim.yaml`                     | serv + qerv + fazyrv (all workers)                            | `tb/mosaic/*` (§8.2)                                                   |
-| `configs/mosaic_all_cores.yaml`               | cv32e20 + ibex + fazyrv + qerv + serv                         | acceptance (renders all 5 SCI branches)                                |
-| `configs/mosaic_log.yaml`                     | serv + qerv + fazyrv on `bus: log` (16 il banks)              | `tb/log_xbar/run.sh`                                                   |
-| `configs/mosaic_log_poc.yaml`                 | PoC topology on `bus: log` (32×2 KB banks)                    | full-size log generation/lint                                          |
-| `configs/mosaic_wake_demo_log.yaml`           | wake demo on `bus: log` (32 banks: +8 TB ext masters)         | `MOSAIC_CFG=… tb/mosaic_soc/run.sh`                                    |
-| `configs/mosaic_floonoc.yaml`                 | wake demo on `bus: floonoc` (FlooNoC AXI NoC)                 | `MOSAIC_CFG=… tb/mosaic_soc/run.sh`, `tb/floonoc/cocotb/run.sh stage2` |
-| `configs/mosaic_picorv32.yaml`                | cv32e20 + 2× PicoRV32 (wake demo)                             | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
-| `configs/mosaic_snitch.yaml`                  | cv32e20 + 2× Snitch (wake demo)                               | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
-| `configs/mosaic_cva6.yaml`                    | **CVA6 TITAN** (sim-only) + fazyrv + serv                     | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
-| `configs/mosaic_new_cores.yaml`               | **CVA6 + Snitch + PicoRV32** — the combined new-cores demo    | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
-| `configs/mosaic_titan_{obi,log,floonoc}.yaml` | all-TITAN SMP: 2× cv32e20 + 2× cv32e40x                       | `MOSAIC_CFG=… tb/mosaic_soc/run_titan.sh` (§8.1)                       |
-| `configs/mosaic_rocket.yaml`                  | cv32e20 + 2× **Rocket** RV64 (sim-only)                       | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
-| `configs/mosaic_boom.yaml`                    | cv32e20 + 2× **BOOM v3** RV64 OoO (sim-only)                  | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
-| `configs/mosaic_berkeley.yaml`                | **Rocket + BOOM** together under a cv32e20 TITAN              | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
-| `configs/mosaic_{rocket,boom}_titan.yaml`     | singleton Berkeley **TITAN** + SERV worker (sim-only)         | `MOSAIC_CFG=… tb/mosaic_soc/run_generic.sh` (§8.1)                     |
-| `configs/mosaic_hazard3.yaml`                 | cv32e20 + 2× **Hazard3** (AHB-Lite, wrapper-smith integrated) | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                             |
+| Config                                        | Cores                                                              | Used by                                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `mosaic.yaml`                                 | **PoC:** 1× cv32e20 + 2× fazyrv + 4× serv                          | default for `make mosaic-gen`, the GDS flow                                              |
+| `configs/mosaic_wake_demo.yaml`               | 1× cv32e20 + 1× fazyrv + 1× serv (per-core boot addr)              | `tb/mosaic_soc/run.sh` (§8.1)                                                            |
+| `configs/mosaic_sim.yaml`                     | serv + qerv + fazyrv (all workers)                                 | `tb/mosaic/*` (§8.2)                                                                     |
+| `configs/mosaic_all_cores.yaml`               | cv32e20 + ibex + fazyrv + qerv + serv                              | acceptance (renders all 5 SCI branches)                                                  |
+| `configs/mosaic_log.yaml`                     | serv + qerv + fazyrv on `bus: log` (16 il banks)                   | `tb/log_xbar/run.sh`                                                                     |
+| `configs/mosaic_log_poc.yaml`                 | PoC topology on `bus: log` (32×2 KB banks)                         | full-size log generation/lint                                                            |
+| `configs/mosaic_wake_demo_log.yaml`           | wake demo on `bus: log` (32 banks: +8 TB ext masters)              | `MOSAIC_CFG=… tb/mosaic_soc/run.sh`                                                      |
+| `configs/mosaic_floonoc.yaml`                 | wake demo on `bus: floonoc` (FlooNoC AXI NoC)                      | `MOSAIC_CFG=… tb/mosaic_soc/run.sh`, `tb/floonoc/cocotb/run.sh stage2`                   |
+| `configs/mosaic_picorv32.yaml`                | cv32e20 + 2× PicoRV32 (wake demo)                                  | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                                               |
+| `configs/mosaic_snitch.yaml`                  | cv32e20 + 2× Snitch (wake demo)                                    | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                                               |
+| `configs/mosaic_cva6.yaml`                    | **CVA6 TITAN** (sim-only) + fazyrv + serv                          | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                                               |
+| `configs/mosaic_new_cores.yaml`               | **CVA6 + Snitch + PicoRV32** — the combined new-cores demo         | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                                               |
+| `configs/mosaic_titan_{obi,log,floonoc}.yaml` | all-TITAN SMP: 2× cv32e20 + 2× cv32e40x                            | `MOSAIC_CFG=… tb/mosaic_soc/run_titan.sh` (§8.1)                                         |
+| `configs/mosaic_rocket.yaml`                  | cv32e20 + 2× **Rocket** RV64 (sim-only)                            | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                                               |
+| `configs/mosaic_boom.yaml`                    | cv32e20 + 2× **BOOM v3** RV64 OoO (sim-only)                       | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                                               |
+| `configs/mosaic_berkeley.yaml`                | **Rocket + BOOM** together under a cv32e20 TITAN                   | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                                               |
+| `configs/mosaic_{rocket,boom}_titan.yaml`     | singleton Berkeley **TITAN** + SERV worker (sim-only)              | `MOSAIC_CFG=… tb/mosaic_soc/run_generic.sh` (§8.1)                                       |
+| `configs/mosaic_hazard3.yaml`                 | cv32e20 + 2× **Hazard3** (AHB-Lite, wrapper-smith integrated)      | `MOSAIC_CFG=… tb/mosaic_soc/run.sh` (§8.1)                                               |
+| `configs/mosaic_tapeout_ultra.yaml`           | **Chipathon Block A:** 2× SERV (TITAN + worker), no DMA/debug/PLIC | `make mosaic-gen MOSAIC_CFG=…` before `flow/librelane/experimental/run_signoff.sh` (§9a) |
 
 Pass any of them with `MOSAIC_CFG=<path>` to `make mosaic-gen`, or via `MOSAIC_CFG`/`RISCV_TC`
 env vars to the `tb/mosaic_soc` scripts.
@@ -535,17 +703,36 @@ env vars to the `tb/mosaic_soc` scripts.
 - ✅ **Full-SoC functional sim passes** — single-core boot-and-run, **and the 3-core TDU
   wake-and-run demo reaches `EXIT SUCCESS`** (TITAN wakes ATLAS + NANO; each runs its own
   program and writes its sentinel). Validated against the cocotb regression too.
-- ✅ **All 12 cores sim-verified in the full SoC** — PicoRV32, Snitch, and CVA6 each reach
-  `EXIT SUCCESS` in the TDU wake demo, plus a combined config (CVA6 TITAN + Snitch + PicoRV32),
-  an all-TITAN 4-core SMP demo (2× cv32e20 + 2× cv32e40x) across all three bus fabrics,
-  the Berkeley RV64 tiles (Rocket, BOOM v3, and both together) behind the TL→OBI window
-  bridge, and Hazard3 (AHB-Lite) integrated end-to-end by the Phase-2 wrapper mechanism.
+- ✅ **10 of the 14 catalog cores run in the full-SoC testbench** — cv32e20, cv32e40x,
+  FazyRV, SERV, PicoRV32, Snitch, CVA6, Hazard3, Rocket and BOOM v3 each reach
+  `EXIT SUCCESS` through `tb/mosaic_soc/`, including a combined config (CVA6 TITAN +
+  Snitch + PicoRV32), an all-TITAN 4-core SMP demo (2× cv32e20 + 2× cv32e40x) across all
+  three bus fabrics, the Berkeley RV64 tiles (Rocket, BOOM v3, and both together) behind
+  the TL→OBI window bridge, and Hazard3 (AHB-Lite) integrated end-to-end by the Phase-2
+  wrapper mechanism. **QERV** is exercised one level down, in the multi-core
+  `cpu_subsystem` TB (`tb/mosaic/`) and the LIC fabric TB, not through the full-SoC top.
+  The remaining three are honest gaps, not oversights: **Ibex** appears only in
+  `mosaic_all_cores.yaml`, which is a _render_ acceptance test, and **cv32e40p /
+  cv32e40px** have no shipped config at all — they are generator-supported and unproven.
 - ✅ **Full regression green** under pinned Verilator 5.050 (unit/SoC TDU, iDMA,
   log-xbar, FlooNoC, SCI cocotb, TL→OBI bridge, 11 wake demos, 3 all-TITAN SMP, production
   firmware, the no-LLM prompt→SoC pipeline, tb-smith single-hart TBs, and generator pytest).
   A nightly-Verilator DFG miscompile of cv32e40x was root-caused and pinned around.
-- 🔜 LibreLane GF180 hardening: flow wired and fail-closed; a bound adapter, qualified
-  32-KiB SRAM bundle, and completed DRC/LVS/STA evidence remain before tapeout signoff.
+- ✅ **Block A macro DRC/LVS clean** (2026-08-01): `mosaic_tapeout_ultra` hardened to the
+  1117.5 µm Chipathon slot passes Magic DRC, KLayout DRC, Netgen LVS ("circuits match
+  uniquely"), XOR, antenna and IR drop with **nothing skipped** — see §9a. Reproducible
+  from a fresh clone: `make mosaic-gen MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml`, then
+  `flow/librelane/experimental/run_signoff.sh` — the configs carry no absolute paths and
+  the source list is resolved from the FuseSoC manifest at run time.
+- ✅ **Gate-level simulation** (2026-08-03): the post-place-and-route netlist — the gates
+  in the GDS — boots XIP from a behavioural flash through only the 22 bonded pins and
+  reports **EXIT SUCCESS in 12 399 cycles**, against the RTL's ~12 400. Run it with
+  `tb/gls/run_gls.sh`; see [`tb/gls/README.md`](tb/gls/README.md).
+- 🔜 Remaining before tapeout: **591 max-slew violations** against the library's own 4.0 ns
+  (max-cap and max-fanout are 0 and 1), **timing-annotated GLS** — blocked by a
+  non-standard construct in the PDK cell models plus a CVC crash, so timing rests on STA
+  at nine corners — and the `PHYSICAL_BUNDLE` attestation path (a bound adapter and
+  qualified 32-KiB SRAM bundle) for the chip-level flow.
 
 **Phase 2 — agentic harness (oh-my-soc): delivered** ,
 [`harness/README.md`](harness/README.md), [`demo/README.md`](demo/README.md)):
@@ -601,6 +788,37 @@ path to a chip is one line:
 Full reference (incl. the driver table and `setup` flags):
 [`harness/README.md`](harness/README.md); detailed walkthroughs with expected
 outputs: [`demo/README.md`](demo/README.md).
+
+### Example A0 — the tapeout part, from one prompt
+
+The claim this project makes is that an LLM authors _configuration_ while
+deterministic Python generates and checks. Here it is on the design that
+actually matters — the Chipathon Block A part being taped out:
+
+```bash
+./demo/03_blocka_from_prompt.sh
+```
+
+```
+fields compared : 16
+fields matching : 16
+→ the prompt reproduced the frozen tapeout config exactly, including all
+  eight selectable platform blocks and both cores' with_csr/compressed/boot_addr
+```
+
+The second half matters more. Remove one clause — `no debug` — and the same
+prompt is **refused**:
+
+```
+soc.target 'tapeout' requires soc.debug=False; True was not part of the
+hardened Block A design
+```
+
+`tapeout` in a prompt is a _claim_; `core_registry`'s capability matrix decides
+whether it holds. A fluent prompt cannot talk its way into a tapeout label, and
+a simulation-only core (CVA6/Rocket/BOOM) asked to tape out is refused the same
+way. No model is called in the demo — the parse is a deterministic grammar, so
+it runs in CI and cannot pass by luck.
 
 ### Example A — an SoC from one sentence
 
@@ -681,7 +899,7 @@ generates that SoC.
 
 ## 13. How LLMs contribute (and how they're checked)
 
-MOSAIC-SoC is a chip design _with_ AI/LLM and
+MOSAIC-SoC is a Chipathon Track D project — chip design _with_ AI/LLM — and
 the division of labor is deliberate: **LLMs never generate the SoC. They
 translate intent and fill judgment gaps, and everything they touch must
 survive the same deterministic gates as hand-written work.** The generator
@@ -703,7 +921,7 @@ Where LLMs actually plug in, and what checks each one:
 The meta-level is the same story: the platform itself is developed in
 LLM-driven sessions (the Phase-2 harness, the Hazard3 integration, and
 tb-matrix were built this way), but every contribution lands as
-deterministic, pytest-guarded code — 439 tests at last count. The one-liner:
+deterministic, pytest-guarded code — 672 tests at last count. The one-liner:
 **LLMs make the generator easier to drive and faster to extend; determinism
 makes what they produce trustworthy.**
 
@@ -714,7 +932,7 @@ Full detail: [`harness/README.md`](harness/README.md),
 
 ## 14. Extending the SoC
 
-**Add a new core** :
+**Add a new core** (summary):
 
 1. Study the core in `refs/IP_Cores_Catalog/<core>/` (bus, params, HDL).
 2. Write `hw/sci/<core>_sci.sv` presenting OBI 1.3 I+D ports.

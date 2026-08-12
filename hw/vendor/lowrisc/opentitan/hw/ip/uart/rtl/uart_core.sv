@@ -5,6 +5,12 @@
 // Description: UART core module
 //
 
+// MOSAIC: the RX/TX FIFO depth below was 32 entries each. The two
+// prim_fifo_sync instances measured 0.066 mm2 in GF180 -- 61% of the UART and
+// 31% of the whole peripheral subsystem -- for a design that prints status
+// lines. Reduced to 4. This trades UART throughput under interrupt latency:
+// a host that cannot service the RX FIFO within 4 character times will drop
+// bytes where 32 would have absorbed the burst.
 module uart_core (
   input                  clk_i,
   input                  rst_ni,
@@ -172,7 +178,7 @@ module uart_core (
   prim_fifo_sync #(
     .Width   (8),
     .Pass    (1'b0),
-    .Depth   (32)
+    .Depth   (4)
   ) u_uart_txfifo (
     .clk_i,
     .rst_ni,
@@ -272,7 +278,7 @@ module uart_core (
   prim_fifo_sync #(
     .Width   (8),
     .Pass    (1'b0),
-    .Depth   (32)
+    .Depth   (4)
   ) u_uart_rxfifo (
     .clk_i,
     .rst_ni,

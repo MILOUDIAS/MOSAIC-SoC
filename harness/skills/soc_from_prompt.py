@@ -62,6 +62,10 @@ _STOPWORDS = {
     "that", "it", "i", "want", "need", "at", "as", "by", "from", "into",
     "verify", "verified", "verification", "scheduling", "existing", "run",
     "test", "testbench", "without", "no", "do", "not", "regenerate",
+    # Framing words for a specific part: describing the target does not change
+    # the design, so they must not read as unrecognized intent.
+    "chipathon", "block", "slot", "part", "macro", "candidate",
+    "only", "just", "its", "own",
     "update", "write", "author", "create", "execute", "simulation", "rtl",
     "only", "but", "just", "include", "includes", "including", "also",
     "full", "full-soc", "full_soc", "fullsoc", "heterogeneous", "configure",
@@ -86,6 +90,15 @@ class ParsedIntent:
     sched_mode: Optional[str] = None
     peripherals: List[str] = field(default_factory=list)
     peripherals_explicit: bool = False
+    scratchpad_bytes: Optional[int] = None
+    target: Optional[str] = None
+    # True only when the prompt SAID "no sram". A bare "0 KB sram" is more
+    # likely a slip than a design decision, and is still refused.
+    sram_zero_by_words: bool = False
+    # Selectable platform blocks. Only keys the prompt actually mentioned are
+    # populated, so silence leaves the generator's defaults alone rather than
+    # asserting a wall of `true`s the user never asked for.
+    platform: Dict[str, Any] = field(default_factory=dict)
     preset: Optional[str] = None
     matched: List[str] = field(default_factory=list)       # provenance
     unrecognized: List[str] = field(default_factory=list)  # surfaced, never dropped
@@ -166,17 +179,50 @@ def parse_prompt(text: str) -> ParsedIntent:
             consumed_spans.append((m.end() + isa.start(), m.end() + isa.end()))
             intent.matched.append(f"{ip} ISA {isa.group(1)}")
         boot = re.search(
-            r"\bboot(?:[\s_-]*(?:address|addr))?\s*[:=]?\s*(0x[0-9a-f]+|\d+)\b",
+            r"\bboot(?:s|ing)?(?:[\s_-]*(?:address|addr))?(?:\s+at)?"
+            r"\s*[:=]?\s*(0x[0-9a-f]+|\d+)\b",
             local_segment,
         )
         if boot:
             group["boot_addr"] = int(boot.group(1), 0)
             consumed_spans.append((m.end() + boot.start(), m.end() + boot.end()))
             intent.matched.append(f"{ip} boot address {boot.group(1)}")
+        # SERV/QERV expose a CSR file and a compressed decoder as parameters,
+        # and the Block A part uses both: CSRs on the TITAN (the boot ROM needs
+        # them), none on the worker. Without these the frozen config is simply
+        # not expressible from a prompt.
+        csr = re.search(r"\b(no|without|with)\s+csrs?\b", local_segment)
+        if csr:
+            group["with_csr"] = 0 if csr.group(1) in ("no", "without") else 1
+            consumed_spans.append(
+                (m.end() + csr.start(), m.end() + csr.end())
+            )
+            intent.matched.append(f"{ip} with_csr {group['with_csr']}")
+        comp = re.search(r"\b(compressed|c\s+extension)\b", local_segment)
+        if comp:
+            group["compressed"] = 1
+            consumed_spans.append(
+                (m.end() + comp.start(), m.end() + comp.end())
+            )
+            intent.matched.append(f"{ip} compressed")
+        # The schema rejects an ISA and a compressed flag that disagree, so an
+        # ISA ending in 'c' implies the decoder. Repaired visibly, not silently.
+        isa_str = group.get("isa", "")
+        if isa_str.startswith("rv32") and "c" in isa_str[4:] and "compressed" not in group:
+            group["compressed"] = 1
+            intent.repairs.append(f"{ip} ISA {isa_str} implies compressed=1")
+
         intent.core_groups.append(group)
         consume(m, f"{count}x {ip}" + (f" ({role})" if role else ""))
 
     # ── memory ──
+    # "no sram" is a real design choice here, not an omission: the Block A part
+    # has no on-chip RAM pool at all and executes XIP from flash.
+    m = re.search(r"\b(?:no|without|zero)\s+(?:on[\s-]*chip\s+)?(?:sram|ram)\b", low)
+    if m:
+        intent.sram_kb = 0
+        intent.sram_zero_by_words = True
+        consume(m, "sram 0 KB (no on-chip RAM pool)")
     m = re.search(r"(\d+)\s*([km])i?b?\s*(?:of\s+)?(?:sram|ram|memory)", low)
     if m:
         kb = int(m.group(1)) * (1024 if m.group(2) == "m" else 1)
@@ -187,6 +233,48 @@ def parse_prompt(text: str) -> ParsedIntent:
         kb = int(m.group(1)) * (1024 if m.group(2) == "m" else 1)
         intent.boot_rom_kb = kb
         consume(m, f"boot ROM {kb} KB")
+
+    # ── implementation target ──
+    # Asking for "tapeout" is a CLAIM that the design matches the qualified
+    # physical matrix (core_registry.TAPEOUT_*). The prompt may make the claim;
+    # validation decides whether it holds. That split is the point: a prompt
+    # cannot talk its way past the capability gate.
+    m = re.search(r"\bfor\s+tape\s*-?out\b|\btape\s*-?out\b", low)
+    if m:
+        intent.target = "tapeout"
+        consume(m, "target tapeout (claim -- validated against the qualified matrix)")
+
+    # ── scratchpad ──
+    # A part with sram_kb: 0 still needs somewhere for the shared-control
+    # window, so the size is worth saying out loud.
+    m = re.search(r"(\d+)\s*(?:b|byte|bytes)\s+scratchpad", low)
+    if m:
+        intent.scratchpad_bytes = int(m.group(1))
+        consume(m, f"scratchpad {intent.scratchpad_bytes} B")
+
+    # ── selectable platform blocks ──
+    # Each is (regex, key, value). These are what make the Chipathon Block A
+    # part expressible from a prompt: it is defined as much by what it REMOVES
+    # as by its core list, and before this the grammar could not say "no DMA".
+    _PLATFORM_RULES = (
+        (r"\b(?:no|without|drop(?:ping)?|omit(?:ting)?)\s+(?:the\s+)?dma\b", "dma", "none"),
+        (r"\bdma\s*[:=]?\s*none\b", "dma", "none"),
+        (r"\b(?:no|without)\s+(?:the\s+)?(?:debug(?:\s+module)?|jtag)\b", "debug", False),
+        (r"\b(?:no|without)\s+(?:the\s+)?(?:plic|interrupt\s+controller)\b", "plic", False),
+        (r"\b(?:no|without)\s+(?:the\s+)?(?:multicore|multi-core)\s+timer\b",
+         "multicore_timer", False),
+        (r"\b(?:no|without)\s+(?:the\s+)?(?:ao\s+)?(?:gpio|gpio[\s-]*ao)\b", "gpio_ao", False),
+        (r"\b(?:no|without)\s+(?:the\s+)?(?:ao\s+)?rv[\s_-]*timer\b", "ao_rv_timer", False),
+        (r"\b(?:no|without)\s+(?:the\s+)?fast\s+interrupts?\b", "ao_fast_intr", False),
+        # XIP: read-only execute-in-place reader instead of a full SPI host.
+        (r"\b(?:xip|execute[\s-]*in[\s-]*place|read[\s-]*only\s+(?:spi|flash))\b",
+         "spi_mode", "xip_only"),
+    )
+    for pattern, key, value in _PLATFORM_RULES:
+        m = re.search(pattern, low)
+        if m:
+            intent.platform[key] = value
+            consume(m, f"{key} = {value!r}")
 
     # ── bus ──
     m = re.search(r"\b(floonoc|noc)\b", low)
@@ -234,16 +322,34 @@ def parse_prompt(text: str) -> ParsedIntent:
         for word, canonical in {**PERIPH_SYNONYMS, **{p: p for p in VALID_PERIPHERALS}}.items()
         if re.search(rf"\b(?:no|without)\s+{re.escape(word)}s?\b", low)
     }
+    # With spi_mode: xip_only the flash interface is the ALWAYS-ON spi_subsystem
+    # reduced to its XIP reader -- it is not a user peripheral. So "XIP from
+    # flash" must not add a `spi` peripheral, which would put back the full
+    # OpenTitan host the prompt just asked to remove (0.717 mm2 of it).
+    if intent.platform.get("spi_mode") == "xip_only":
+        denied_peripherals.add("spi")
+        intent.matched.append("spi peripheral excluded (xip_only is not a SPI host)")
+
     if denied_peripherals:
         intent.peripherals_explicit = True
+    # Scan a MASKED copy: spans already claimed by the core, memory and
+    # platform rules are blanked out. Without this, "no rv timer" contributes a
+    # `timer` peripheral and "XIP from flash" contributes `spi` -- the exact
+    # blocks the prompt just asked to remove.
+    masked = list(low)
+    for start, end in consumed_spans:
+        for k in range(start, min(end, len(masked))):
+            masked[k] = " "
+    masked = "".join(masked)
+
     for word, canon in list(PERIPH_SYNONYMS.items()):
-        m = re.search(rf"\b{word}\b", low)
+        m = re.search(rf"\b{word}\b", masked)
         if m and canon not in denied_peripherals and canon not in intent.peripherals:
             intent.peripherals.append(canon)
             intent.peripherals_explicit = True
             consume(m, f"peripheral {canon} (from '{word}')")
     for p in sorted(VALID_PERIPHERALS):
-        m = re.search(rf"\b{p}s?\b", low)
+        m = re.search(rf"\b{p}s?\b", masked)
         if m and p not in denied_peripherals and p not in intent.peripherals:
             intent.peripherals.append(p)
             intent.peripherals_explicit = True
@@ -419,8 +525,17 @@ class SocFromPrompt:
         intent = (_llm_intent(text) if use_llm else None) or parse_prompt(text)
         _repair(intent)
         invalid_memory = []
-        if intent.sram_kb is not None and intent.sram_kb <= 0:
-            invalid_memory.append("SRAM must be greater than 0 KB")
+        # sram_kb: 0 is a real profile -- the Chipathon Block A part has NO
+        # on-chip RAM pool and executes XIP from external flash -- but only when
+        # the prompt SAID so. "0 KB sram" as a quantity is still treated as a
+        # slip, because silently building a RAM-less SoC from a typo is worse
+        # than asking.
+        if intent.sram_kb is not None and intent.sram_kb < 0:
+            invalid_memory.append("SRAM size cannot be negative")
+        elif intent.sram_kb == 0 and not intent.sram_zero_by_words:
+            invalid_memory.append(
+                "0 KB SRAM: write 'no sram' if you mean an external-memory-only part"
+            )
         if intent.boot_rom_kb is not None and intent.boot_rom_kb <= 0:
             invalid_memory.append("boot ROM must be greater than 0 KB")
         if invalid_memory:
@@ -509,6 +624,9 @@ class SocFromPrompt:
                     if intent.peripherals_explicit
                     else ["uart"]
                 ),
+                scratchpad_bytes=intent.scratchpad_bytes,
+                platform=intent.platform or None,
+                target=intent.target or "rtl",
             )
         stages: Dict[str, Any] = {"plan": planned.details,
                                   "config": {"ok": gen.ok, "summary": gen.summary,

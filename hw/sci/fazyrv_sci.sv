@@ -68,6 +68,31 @@ module fazyrv_sci #(
 
     logic        trap_o;
 
+    // ── Timing contract: MEMDLY1 must be 0 ───────────────────────────────
+    // This wrapper presents FazyRV with exactly ONE memory model: a
+    // COMBINATIONAL (0-latency) Wishbone Classic slave, synthesised by freezing
+    // the core's clock until the transfer it issued has returned (below). There
+    // is no second contract to select between, so MEMDLY1 must be 0.
+    //
+    // With MEMDLY1=1 the core's control FSM leaves IFETCH unconditionally after
+    // one cycle and ignores the ack completely:
+    //     fazyrv_cntrl.sv:  if (MEMDLY1 | imem_ack_i) state_n = DECODE;
+    // That is only correct against a memory which ALWAYS answers in exactly one
+    // cycle. A shared OBI crossbar cannot promise that — a peripheral, the boot
+    // ROM, or a contended SRAM bank takes longer — so the core would run on
+    // without its data. It also directly contradicts the clock-stall above,
+    // which exists precisely to make latency invisible.
+    //
+    // Measured: MEMDLY1=1 breaks a FazyRV worker that passes with MEMDLY1=0.
+    // Fail at elaboration rather than emit hardware that cannot be correct.
+    if (MEMDLY1 != 1'b0) begin : gen_memdly1_unsupported
+        $error("fazyrv_sci: MEMDLY1=1 is unsupported. This wrapper presents a ",
+               "0-latency Wishbone view by clock-stalling, so FazyRV must be ",
+               "built with MEMDLY1=0. With MEMDLY1=1 the core ignores the ack ",
+               "and assumes a fixed 1-cycle memory, which the OBI crossbar ",
+               "cannot guarantee.");
+    end
+
     // ── Clock-stall adapter: registered bus → combinational view ─────────
     // FazyRV is built for COMBINATIONAL (0-latency) memory — it reads/shifts the
     // fetched word during its fetch cycle. The MOSAIC system xbar/SRAM is
@@ -81,6 +106,17 @@ module fazyrv_sci #(
     // the tb/mosaic cocotb model) stb & ~rvalid is never true, so it never stalls
     // and is fully transparent. The negedge-latched gate is glitch-free and breaks
     // the comb path (FazyRV's stb → stall → its own clock).
+    //
+    // INVARIANT (why a bare `ack = rvalid` is sufficient): the two ports are
+    // never outstanding at the same time. FazyRV issues instruction fetches in
+    // its IFETCH state and data transfers only in ACK
+    // (fazyrv_cntrl.sv: `assign dmem_stb_o = (state_r == ACK);`), which are
+    // mutually exclusive FSM states. Both wait terms therefore stall the shared
+    // clock for one port at a time, and a one-cycle rvalid is always observed by
+    // the core on its next edge. Do NOT "harden" this with a sticky per-port
+    // response latch: holding ack beyond the cycle the core is released makes
+    // FazyRV count a second, phantom Wishbone transfer and breaks a working
+    // worker. (Tried; it regressed the all-hart liveness gate.)
     logic fz_imem_wait, fz_dmem_wait, fz_stall, fz_stall_q;
     logic fazyrv_clk;
     assign fz_imem_wait = wb_imem_stb & wb_imem_cyc & ~instr_resp_i.rvalid;

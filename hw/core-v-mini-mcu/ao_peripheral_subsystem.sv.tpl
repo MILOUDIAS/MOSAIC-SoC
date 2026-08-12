@@ -6,6 +6,10 @@
   base_peripheral_domain = xheep.get_base_peripheral_domain()
   is_mc = xheep.is_multi_core()
   tdu_enabled = is_mc and bool(xheep.get_extension("tdu_enabled"))
+  _rt = xheep.get_extension("ao_rv_timer")
+  ao_rv_timer = True if _rt is None else bool(_rt)
+  _fi = xheep.get_extension("ao_fast_intr")
+  ao_fast_intr = True if _fi is None else bool(_fi)
   sched_mode = xheep.get_extension("sched_mode") or "static"
   sched_mode_sv = {
       "static": "tdu_pkg::SCHED_STATIC",
@@ -438,6 +442,7 @@ module ao_peripheral_subsystem
       .dma_subsystem_pwr_ctrl_o(dma_subsystem_pwr_ctrl)
   );
 
+% if ao_rv_timer:
   reg_to_tlul #(
       .req_t(reg_pkg::reg_req_t),
       .rsp_t(reg_pkg::reg_rsp_t),
@@ -463,6 +468,22 @@ module ao_peripheral_subsystem
       .intr_timer_expired_0_0_o(rv_timer_0_intr_o),
       .intr_timer_expired_1_0_o(rv_timer_1_intr_o)
   );
+% else:
+  // soc.ao_rv_timer: false -- the always-on rv_timer and its TL-UL bridge are
+  // omitted. mosaic_clint still provides per-hart mtime/mtimecmp and software
+  // interrupts, which is what the TDU wake path uses. Anything that polls the
+  // AO timer's register window gets error+ready instead of hanging.
+  // Both halves of the TL-UL pair are tied off. h2d was driven by the
+  // reg_to_tlul bridge that this branch omits, so absorbing it into an unused
+  // signal instead of driving it left 107 bits used-but-undriven -- the same
+  // synth-check signature that exposed the DMA response bug.
+  assign rv_timer_tl_h2d = '0;
+  assign rv_timer_tl_d2h = '0;
+  assign rv_timer_0_intr_o = 1'b0;
+  assign rv_timer_1_intr_o = 1'b0;
+  assign ao_peripheral_slv_rsp[core_v_mini_mcu_pkg::RV_TIMER_AO_IDX] =
+      '{error: 1'b1, ready: 1'b1, rdata: '0};
+% endif
 
 % if base_peripheral_domain.contains_peripheral('dma') and xheep.get_base_peripheral_domain().get_dma().get_is_included():
 % if is_mc:
@@ -551,8 +572,24 @@ module ao_peripheral_subsystem
   assign dma_window_intr_o  = '0;
   assign dma_done_o         = '0;
   assign dma_ready          = '0;
+
+  // The DMA still occupies its slot in the AO register demux even when it is
+  // not instantiated (soc.dma: none). Leaving the response undriven makes any
+  // access to the DMA window hang the bus forever -- and it leaves an undriven
+  // wire that Yosys' synth check reports as an error, which is how this was
+  // found. Answer with error+ready so a stray access terminates instead.
+  //
+  // ONE slot, not two. DMA_CH0_IDX is NOT an AO peripheral index: it is an
+  // 8-bit index into the DMA's own channel address map (DMA_ADDR_RULES), and
+  // it equals 0 -- the same value as SOC_CTRL_IDX. Driving
+  // ao_peripheral_slv_rsp[DMA_CH0_IDX] therefore double-drives the soc_ctrl
+  // response, and the constant wins: soc_ctrl reads return error=1, rdata=0.
+  // The whole DMA register window is covered by DMA_IDX alone.
+  assign ao_peripheral_slv_rsp[core_v_mini_mcu_pkg::DMA_IDX] =
+      '{error: 1'b1, ready: 1'b1, rdata: '0};
 % endif
 
+% if ao_fast_intr:
   fast_intr_ctrl #(
       .reg_req_t(reg_pkg::reg_req_t),
       .reg_rsp_t(reg_pkg::reg_rsp_t)
@@ -564,6 +601,17 @@ module ao_peripheral_subsystem
       .fast_intr_i,
       .fast_intr_o
   );
+% else:
+  // soc.ao_fast_intr: false -- no fast interrupt controller. Nothing routes a
+  // fast interrupt to a hart; with soc.plic already false this design takes no
+  // external interrupts at all, so the controller had nothing to deliver.
+  assign fast_intr_o = '0;
+  assign ao_peripheral_slv_rsp[core_v_mini_mcu_pkg::FAST_INTR_CTRL_IDX] =
+      '{error: 1'b1, ready: 1'b1, rdata: '0};
+
+  logic unused_fast_intr_i;
+  assign unused_fast_intr_i = ^{fast_intr_i};
+% endif
 
 % if base_peripheral_domain.contains_peripheral('gpio_ao'):
   /* GPIO subsystem */

@@ -151,16 +151,21 @@ void tdu_set_cpi_estimate(uint32_t hart, uint32_t cpi);
 uint32_t tdu_get_cpi_estimate(uint32_t hart);
 
 /**
- * Read the energy counter (active cores x cycles proxy).
+ * Read the active-hart-cycles counter.
  *
- * @return Current energy counter value.
+ * Sum over time of the number of running harts. This is a WORKLOAD
+ * proxy, NOT energy: every hart is weighted equally, so a cycle of a
+ * bit-serial SERV counts the same as a cycle of a BOOM. Saturates at
+ * UINT32_MAX rather than wrapping.
+ *
+ * @return Current active-hart-cycles value (saturating).
  */
-uint32_t tdu_get_energy_counter(void);
+uint32_t tdu_get_active_hart_cycles(void);
 
 /**
- * Clear the energy counter.
+ * Clear the active-hart-cycles counter.
  */
-void tdu_clear_energy_counter(void);
+void tdu_clear_active_hart_cycles(void);
 
 /**
  * Push a task and wake the target core.

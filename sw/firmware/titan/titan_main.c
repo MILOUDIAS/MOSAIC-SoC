@@ -171,7 +171,7 @@ static void system_init(void) {
     }
 
     /* Clear energy counter for measurement. */
-    tdu_clear_energy_counter();
+    tdu_clear_active_hart_cycles();
 }
 
 /**
@@ -283,7 +283,7 @@ static void wait_for_completion(void) {
     }
 
     /* Read final energy counter for reporting. */
-    (void)tdu_get_energy_counter();
+    (void)tdu_get_active_hart_cycles();
 }
 
 /**

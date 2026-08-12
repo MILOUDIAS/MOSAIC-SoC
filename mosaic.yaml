@@ -4,7 +4,13 @@
 soc:
   name: mosaic_poc_alpha
   pdk: gf180mcu
-  target: tapeout        # strict GF180/OBI/32-KiB capability gate
+  # NOT 'tapeout'. This 7-hart PoC is the RTL/simulation reference topology and
+  # has no physical evidence behind it. The qualified physical part is the
+  # Chipathon Block A design in configs/mosaic_tapeout_ultra.yaml, which is what
+  # core_registry.TAPEOUT_* now describes. A schematic reviewer correctly
+  # flagged that this file claiming 'tapeout' while being far larger than the
+  # 22-pin Block A budget made the repository contradict itself.
+  target: simulation
 
   cores:
     - ip: cv32e20         # big core — CVE2, 2-stage, RV32E/M

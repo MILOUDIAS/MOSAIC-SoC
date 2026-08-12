@@ -13,13 +13,19 @@ class Bank:
     """
     Represents a ram bank
 
-    :param int size_k: size in kiB
+    :param int size_k: size in kiB. Ignored when ``size_bytes`` is given.
     :param int start_address: start address of the bank, in interleaved mode it should be the start address od the whole group
     :param int map_idx: index in the global address map. Has to be unique. Interleaved mode banks should have consecutive indices.
     :param int il_level: number of bits used for interleaving.
     :param int il_offset: position in interleaved bank group if in any else 0. Should be consistent with map_idx.
+    :param Optional[int] size_bytes: exact size in BYTES, for memories smaller
+        than 1 kiB that integer-kiB sizing cannot express -- the MOSAIC
+        sub-KiB scratchpad (memory.scratchpad_bytes). Everything downstream
+        already works in bytes: memory_subsystem.sv.tpl derives the address
+        width from ``size().bit_length()`` and passes ``size() // 4`` as
+        ``NumWords``, so a 512 B bank generates correctly.
     :raise TypeError: when parameters don't have the right type.
-    :raise ValueError: when size_k isn't a power of two.
+    :raise ValueError: when the size isn't a power of two.
     :raise ValueError: when start_address is not aligned on size.
     :raise ValueError: when il_offset is to big for the given il_level().
     """
@@ -31,9 +37,13 @@ class Bank:
         map_idx: int,
         il_level: int = 0,
         il_offset: int = 0,
+        size_bytes: "int | None" = None,
     ):
-        if not type(size_k) is int:
-            raise TypeError("Bank size should be an int")
+        if size_bytes is None:
+            if not type(size_k) is int:
+                raise TypeError("Bank size should be an int")
+        elif not type(size_bytes) is int:
+            raise TypeError("Bank size_bytes should be an int")
 
         if not type(start_address) is int:
             raise TypeError("Start address should be an int")
@@ -47,6 +57,11 @@ class Bank:
         if not type(il_offset) is int:
             raise TypeError("il_offset size should be an int")
 
+        # Size is carried in BYTES internally; size_k stays the kiB-facing
+        # constructor argument so every existing caller is unaffected.
+        self._size_bytes: int = (
+            size_bytes if size_bytes is not None else size_k * 1024
+        )
         self._size_k: int = size_k
         self._start_address: int = start_address
         self._map_idx: int = map_idx
@@ -54,9 +69,13 @@ class Bank:
         self._il_offset: int = il_offset
 
         # check if power of 2
-        if not is_pow2(self._size_k):
+        if not is_pow2(self._size_bytes):
             raise ValueError(
-                f"Bank size {self._size_k}kiB is not a positive power of two"
+                f"Bank size {self._size_bytes} bytes is not a positive power of two"
+            )
+        if self._size_bytes < 4:
+            raise ValueError(
+                f"Bank size {self._size_bytes} bytes is smaller than one 32-bit word"
             )
 
         if self._il_offset >= 2**self._il_level:
@@ -69,18 +88,18 @@ class Bank:
         # TODO: Validate start address
 
         self._end_address = (
-            self._start_address + self._size_k * 1024 * 2**self._il_level
+            self._start_address + self._size_bytes * 2**self._il_level
         )
 
     def __str__(self) -> str:
-        return f"Bank(size_k={self._size_k}, start_address=0x{self._start_address:08X}, end_address=0x{self._end_address:08X}, map_idx={self._map_idx}, il_level={self._il_level}, il_offset={self._il_offset})"
+        return f"Bank(size={self._size_bytes}B, start_address=0x{self._start_address:08X}, end_address=0x{self._end_address:08X}, map_idx={self._map_idx}, il_level={self._il_level}, il_offset={self._il_offset})"
 
     def size(self) -> int:
         """
         :return: the bank size in Bytes
         :rtype: int
         """
-        return self._size_k * 1024
+        return self._size_bytes
 
     def name(self) -> str:
         """

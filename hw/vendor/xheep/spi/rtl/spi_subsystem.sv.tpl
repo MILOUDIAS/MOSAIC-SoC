@@ -4,6 +4,8 @@
 
 <%
   base_peripheral_domain = xheep.get_base_peripheral_domain()
+  _spi_mode = xheep.get_extension("spi_mode")
+  spi_xip_only = (_spi_mode == "xip_only")
 %>
 
 module spi_subsystem
@@ -82,6 +84,44 @@ module spi_subsystem
   spi_host_reg_pkg::spi_host_hw2reg_status_reg_t external_spi_host_hw2reg_status;
 
   // Multiplexer
+% if spi_xip_only:
+  // soc.spi: xip_only -- the OpenTitan SPI host is not instantiated, so there
+  // is nothing to multiplex: obi_spimemio drives the flash pins permanently
+  // and use_spimemio_i is ignored. The ot_* nets below are tied off so the
+  // removal leaves no undriven logic behind.
+  always_comb begin
+    spi_flash_sck_o        = yo_spi_sck;
+    spi_flash_sck_en_o     = yo_spi_sck_en;
+    spi_flash_csb_o        = yo_spi_csb;
+    spi_flash_csb_en_o     = yo_spi_csb_en;
+    spi_flash_sd_o         = yo_spi_sd_out;
+    spi_flash_sd_en_o      = yo_spi_sd_en;
+    ot_spi_sd_in           = '0;
+    yo_spi_sd_in           = spi_flash_sd_i;
+    spi_flash_intr_error_o = 1'b0;
+    spi_flash_intr_event_o = 1'b0;
+    spi_flash_rx_valid_o   = 1'b0;
+    spi_flash_tx_ready_o   = 1'b0;
+  end
+
+  assign ot_spi_sck       = 1'b0;
+  assign ot_spi_sck_en    = 1'b0;
+  assign ot_spi_csb       = '1;   // chip selects are active low: '1 = deselected
+  assign ot_spi_csb_en    = '0;
+  assign ot_spi_sd_out    = '0;
+  assign ot_spi_sd_en     = '0;
+  assign ot_spi_intr_error = 1'b0;
+  assign ot_spi_intr_event = 1'b0;
+  assign ot_spi_rx_valid  = 1'b0;
+  assign ot_spi_tx_ready  = 1'b0;
+  assign external_spi_host_hw2reg_status = '0;
+  // The SPI-host register window still exists in the address map. Answer with
+  // error+ready rather than leaving it undriven, which would hang any access.
+  assign ot_reg_rsp_o = '{error: 1'b1, ready: 1'b1, rdata: '0};
+
+  logic unused_spi_mode;
+  assign unused_spi_mode = use_spimemio_i;
+% else:
   always_comb begin
     if (!use_spimemio_i) begin
       spi_flash_sck_o = ot_spi_sck;
@@ -112,6 +152,8 @@ module spi_subsystem
     end
   end
 
+% endif
+
   // YosysHQ SPI
   assign yo_spi_sck_en = 1'b1;
   assign yo_spi_csb_en = 2'b01;
@@ -141,7 +183,7 @@ module spi_subsystem
   );
 
 
-% if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
+% if base_peripheral_domain.contains_peripheral('w25q128jw_controller') and not spi_xip_only:
 
   // Master ports to the SPI HOST from Flash Controller
   reg_req_t spi_host_reg_req;
@@ -208,6 +250,7 @@ module spi_subsystem
 
 
 
+% if not spi_xip_only:
   // OpenTitan SPI Snitch Version used for booting
   spi_host #(
       .reg_req_t(reg_pkg::reg_req_t),
@@ -215,7 +258,7 @@ module spi_subsystem
   ) ot_spi_i (
       .clk_i,
       .rst_ni,
-% if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
+% if base_peripheral_domain.contains_peripheral('w25q128jw_controller') and not spi_xip_only:
       .reg_req_i(spi_host_reg_req_mux),
       .reg_rsp_o(spi_host_reg_rsp_mux),
 % else:
@@ -239,6 +282,7 @@ module spi_subsystem
       .intr_error_o(ot_spi_intr_error),
       .intr_spi_event_o(ot_spi_intr_event)
   );
+% endif
 
 `ifndef SYNTHESIS
 

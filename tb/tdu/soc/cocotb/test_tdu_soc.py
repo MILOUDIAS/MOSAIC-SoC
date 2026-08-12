@@ -10,7 +10,7 @@ matter at the SoC integration level:
 
 Register offsets (tdu_pkg): CORE_STATUS=0x00, SCHED_MODE=0x04, WAKE_MASK=0x08,
 WAKE_REQ=0x0C, TASK_PUSH=0x10, TASK_POP=0x14, TASK_STATUS=0x18,
-    ENERGY_COUNTER=0x1C, CPI_EST_BASE=0x20, PARK_REQ=0x60.
+    ACTIVE_HART_CYCLES=0x1C, CPI_EST_BASE=0x20, PARK_REQ=0x60.
 """
 
 import cocotb

@@ -40,6 +40,8 @@ soc:
     sram_kb: 32
     boot_rom_kb: 2
 
+  dma: idma
+
   bus: obi
 
   scheduler:

@@ -63,7 +63,7 @@ extern "C" {
 #define TDU_TASK_STATUS_REG_OFFSET   0x18u
 
 /** Energy counter register offset (RO/RC). Write clears. */
-#define TDU_ENERGY_COUNTER_REG_OFFSET 0x1Cu
+#define TDU_ACTIVE_HART_CYCLES_REG_OFFSET 0x1Cu
 
 /** CPI estimate array base offset (RW). One 32-bit word per hart. */
 #define TDU_CPI_EST_BASE_OFFSET      0x20u

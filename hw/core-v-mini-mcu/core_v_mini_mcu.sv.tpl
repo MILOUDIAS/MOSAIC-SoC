@@ -16,6 +16,8 @@
   is_mc = xheep.is_multi_core()
   nh = xheep.num_harts()
   tdu_enabled = is_mc and bool(xheep.get_extension("tdu_enabled"))
+  debug_ext = xheep.get_extension("debug_enabled")
+  debug_enabled = True if debug_ext is None else bool(debug_ext)
   debug_hart_mask = xheep.get_extension("debug_hart_mask")
   if debug_hart_mask is None:
       debug_hart_mask = (1 << max(1, nh)) - 1
@@ -454,6 +456,7 @@ module core_v_mini_mcu
   );
 % endif
 
+% if debug_enabled:
   debug_subsystem #(
       .NRHARTS    (NRHARTS),
       .JTAG_IDCODE(JTAG_IDCODE),
@@ -479,6 +482,27 @@ module core_v_mini_mcu
       .debug_master_req_o(debug_master_req),
       .debug_master_resp_i(debug_master_resp)
   );
+% else:
+  // soc.debug: false -- JTAG DTM and the RISC-V debug module are omitted.
+  // The design keeps its debug crossbar master and slave slots so the bus
+  // index map is identical to a debug-enabled build; both are tied off here.
+  // Consequences: no halt/step/resume, no external memory access over JTAG,
+  // and no debug-driven ndmreset. Bring-up must go through the boot ROM.
+  assign debug_req         = '0;
+  assign debug_reset_n     = 1'b1;
+  assign debug_slave_resp  = '0;
+  assign debug_master_req  = '0;
+  assign jtag_tdo_o        = 1'b0;
+  assign spi_slave_miso_o  = 1'b0;
+  assign spi_slave_miso_oe_o = 1'b0;
+
+  // Inputs the debug subsystem would have consumed.
+  logic unused_debug_inputs;
+  assign unused_debug_inputs = ^{jtag_tck_i, jtag_tms_i, jtag_trst_ni,
+                                 jtag_tdi_i, spi_slave_sck_i, spi_slave_cs_i,
+                                 spi_slave_mosi_i, debug_slave_req,
+                                 debug_master_resp};
+% endif
 
   system_bus #(
       .NUM_BANKS(core_v_mini_mcu_pkg::NUM_BANKS),

@@ -241,11 +241,27 @@ def validate_bundle(bundle_path: Path, mode: str) -> Dict[str, Path]:
         "memory": {
             "sram_kb": memory.get("declared_sram_kb") if isinstance(memory, dict) else None,
             "boot_rom_kb": memory.get("declared_boot_rom_kb") if isinstance(memory, dict) else None,
+            "scratchpad_bytes": (
+                memory.get("declared_scratchpad_bytes") if isinstance(memory, dict) else None
+            ),
         },
         "cores": public_cores,
         "scheduler": resolved.get("scheduler", {}),
         "peripherals": resolved.get("declared_peripherals", []),
     }
+    # The selectable platform blocks (soc.dma/debug/plic/spi_mode/...). The
+    # qualified Block A design is defined as much by what it REMOVES as by its
+    # core list, so these have to reach target_capability_errors. A manifest
+    # predating resolved.platform has no claim to make about them and is
+    # rejected below rather than silently passing on defaults.
+    platform = resolved.get("platform")
+    if not isinstance(platform, dict):
+        raise PreflightError(
+            "MOSAIC build manifest has no resolved.platform object: it predates "
+            "selectable platform blocks and cannot attest which were built in. "
+            "Regenerate the manifest with the current generator."
+        )
+    soc.update(platform)
     capability_errors = target_capability_errors(soc)
     if resolved.get("target") != "tapeout" or capability_errors:
         details = "; ".join(capability_errors) or "resolved.target is not 'tapeout'"
