@@ -22,6 +22,7 @@ from ..core import (
 )
 from harness.evidence.gate_guard import gate_error_finding, gate_guard
 from harness.evidence.signoff import parse_signoff
+from harness.evidence.waivers import load_waivers
 from harness.evidence.status import EvidenceStatus
 
 # ── Flow definitions ─────────────────────────────────────────────────
@@ -30,50 +31,88 @@ FLOWS: Dict[str, Dict[str, Any]] = {
     "mosaic-gen": {
         "cmd": ["make", "mosaic-gen"],
         "description": "Generate multi-core SoC RTL from mosaic.yaml",
+        "effect": "write",
+        "cost": "minutes",
+        "scopes": ["rtl", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 300,
         "outputs": ["hw/core-v-mini-mcu/core_v_mini_mcu.sv"],
     },
     "mosaic-gen-config": {
         "cmd_prefix": ["make", "mosaic-gen", "MOSAIC_CFG="],
         "description": "Generate SoC RTL from a specific config",
+        "effect": "write",
+        "cost": "minutes",
+        "scopes": ["rtl", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 300,
     },
     "verilator-lint": {
         "cmd": ["make", "verilator-build"],
         "description": "Build Verilator model (includes lint)",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["rtl", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 600,
     },
     "verilator-run": {
         "cmd": ["make", "verilator-run"],
         "description": "Run Verilator simulation",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 300,
     },
     "tb-multicore": {
         "cmd": ["bash", "tb/mosaic/run.sh"],
         "description": "Multi-core SCI wake-loop test",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 300,
     },
     "tb-tdu": {
         "cmd": ["bash", "tb/tdu/soc/cocotb/run.sh"],
         "description": "TDU SoC-level cocotb test",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 300,
     },
     "tb-idma": {
         "cmd": ["bash", "tb/idma/cocotb/run.sh"],
         "description": "iDMA cocotb test",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 300,
     },
     "harden-classic": {
         "cmd": ["make", "classic"],
         "cwd": "flow/librelane",
         "description": "LibreLane classic flow (SoC core only)",
+        "effect": "execute",
+        "cost": "hours",
+        "scopes": ["physical"],
+        "approval": True,
         "timeout": 7200,
         # A hardening run is gated on parsed signoff evidence, never on the
         # make exit code. Evidence comes from the LibreLane run tree
         # (runs/<TAG>/final/metrics.csv plus per-step reports), not stdout.
         # See harness/evidence/librelane.py and roadmap §12.5.
-        "signoff": {"drc": True, "lvs": True, "timing": False, "antenna": False},
+        #
+        # timing and antenna were False, which made roadmap M0's first exit
+        # criterion ("an exit-zero fixture with negative required WNS fails")
+        # implemented, tested, and switched off. Both are now required: missing
+        # timing or antenna evidence is INFRASTRUCTURE_ERROR, not a pass.
+        "signoff": {"drc": True, "lvs": True, "timing": True, "antenna": True},
         "runs_dir": "flow/librelane/runs",
+        "waivers": "flow/librelane/signoff_waivers.yaml",
         "report_dir": "flow/librelane/final_classic",
         "required_evidence": ["signoff_status"],
     },
@@ -81,9 +120,14 @@ FLOWS: Dict[str, Dict[str, Any]] = {
         "cmd": ["make", "harden", "SLOT=mosaic"],
         "cwd": "flow/librelane",
         "description": "LibreLane chip flow (full chip + pad ring)",
+        "effect": "execute",
+        "cost": "hours",
+        "scopes": ["physical"],
+        "approval": True,
         "timeout": 14400,
-        "signoff": {"drc": True, "lvs": True, "timing": False, "antenna": False},
+        "signoff": {"drc": True, "lvs": True, "timing": True, "antenna": True},
         "runs_dir": "flow/librelane/runs",
+        "waivers": "flow/librelane/signoff_waivers.yaml",
         "report_dir": "flow/librelane/final",
         "required_evidence": ["signoff_status"],
     },
@@ -91,12 +135,20 @@ FLOWS: Dict[str, Dict[str, Any]] = {
         "cmd": ["make"],
         "cwd": "sw/firmware",
         "description": "Build firmware (TITAN + workers)",
+        "effect": "execute",
+        "cost": "seconds",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 60,
     },
     "firmware-demo": {
         "cmd": ["make", "demo"],
         "cwd": "sw/firmware",
         "description": "Build scheduling demo firmware",
+        "effect": "execute",
+        "cost": "seconds",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 60,
     },
     # ── full-SoC functional sims (config selected via MOSAIC_CFG env) ──
@@ -105,6 +157,10 @@ FLOWS: Dict[str, Dict[str, Any]] = {
         "env_config_key": "MOSAIC_CFG",
         "require_exit_success": True,  # run.sh exits 0 even on sim failure
         "description": "Full-SoC TDU wake-and-run demo (EXIT SUCCESS gate)",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 3600,
     },
     "tb-soc-generic": {
@@ -112,6 +168,10 @@ FLOWS: Dict[str, Dict[str, Any]] = {
         "env_config_key": "MOSAIC_CFG",
         "require_exit_success": True,
         "description": "Topology-generic all-hart liveness demo (EXIT SUCCESS gate)",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 3600,
     },
     "tb-soc-titan": {
@@ -119,6 +179,10 @@ FLOWS: Dict[str, Dict[str, Any]] = {
         "env_config_key": "MOSAIC_CFG",
         "require_exit_success": True,
         "description": "All-TITAN SMP demo (EXIT SUCCESS gate)",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 3600,
     },
     "tb-soc-fw": {
@@ -126,28 +190,90 @@ FLOWS: Dict[str, Dict[str, Any]] = {
         "env_config_key": "MOSAIC_CFG",
         "require_exit_success": True,
         "description": "Production C firmware on the full SoC",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 3600,
     },
     # ── unit / fabric TBs ──
     "tb-tl-obi": {
         "cmd": ["bash", "tb/tl_obi/run.sh"],
         "description": "TileLink->OBI bridge unit TB (rocket/boom SCI)",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 600,
     },
     "tb-log-xbar": {
         "cmd": ["bash", "tb/log_xbar/run.sh"],
         "description": "Logarithmic-interconnect fabric unit TB",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 600,
     },
     "tb-floonoc": {
         "cmd": ["bash", "tb/floonoc/cocotb/run.sh"],
         "description": "FlooNoC bridges + NoC smoke (cocotb)",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
         "timeout": 900,
     },
     # ── generator/config pytests ──
+    # Gate-level simulation of the ROUTED netlist. Registered as a flow, and
+    # required for a physical claim, because of what 2026-08-12 established:
+    # runs/blocka_reharden passed DRC, LVS, XOR, antenna, routing DRC and
+    # timing at every corner, and did not boot. LVS proves the layout matches
+    # the NETLIST; nothing in this flow proved the netlist matches the RTL, and
+    # GLS was something you had to remember to run by hand.
+    #
+    # GLS_RUN selects which hardening run's netlist to simulate. The powerup
+    # init is regenerated per netlist by run_gls.sh's caller -- see
+    # tb/gls/gen_powerup_init.py.
+    "gls": {
+        "cmd": ["bash", "tb/gls/run_gls.sh"],
+        "require_exit_success": True,
+        "description": "Gate-level sim of the routed netlist (EXIT SUCCESS gate)",
+        "effect": "execute",
+        "cost": "minutes",
+        # `physical` because it judges a physical artefact, and the simulation
+        # scopes because it is a simulation and refusing it under `simulation`
+        # would push people to widen their scope to check a netlist.
+        "scopes": ["testbench", "simulation", "integration", "physical"],
+        "approval": False,
+        "timeout": 5400,
+    },
+    # Sequential equivalence: the routed netlist against the RTL it came from.
+    # GLS proves a netlist can boot -- one firmware image, one path through 22
+    # bonded pins. This covers the logic instead. Neither subsumes the other.
+    #
+    # kepler-formal exits 0 whether it proves equivalence or finds a
+    # counterexample, so the gate is the EXIT SUCCESS marker run_lec.sh emits
+    # only on a full-coverage proof.
+    "lec": {
+        "cmd": ["bash", "flow/librelane/scripts/run_lec.sh"],
+        "require_exit_success": True,
+        "description": "Netlist-vs-RTL sequential equivalence (kepler-formal)",
+        "effect": "execute",
+        "cost": "hours",
+        "scopes": ["physical", "integration", "simulation", "testbench"],
+        # Formal on a 70k-cell design can run for hours and may not converge.
+        # That is a real cost, not a formality.
+        "approval": True,
+        "timeout": 7200,
+    },
     "pytest": {
         "cmd": ["python3", "-m", "pytest", "test/test_x_heep_gen", "-q"],
         "description": "Config-system + harness pytest suites",
+        "effect": "execute",
+        "cost": "minutes",
+        "scopes": ["analysis", "config", "rtl", "simulation", "integration", "testbench", "documentation", "drc", "physical"],
+        "approval": False,
         "timeout": 900,
     },
 }
@@ -380,6 +506,10 @@ class FlowRunner:
                 require_lvs=bool(signoff_spec.get("lvs")),
                 require_timing=bool(signoff_spec.get("timing")),
                 require_antenna=bool(signoff_spec.get("antenna")),
+                waivers=load_waivers(
+                    self.repo_root / spec["waivers"]
+                    if spec.get("waivers") else None
+                ),
                 classify=lambda ev: ev.status,
             )
             if gate.errored:
@@ -442,6 +572,10 @@ class FlowRunner:
                 summary_parts.append(f"drc={metrics['drc_violations']}")
             if metrics.get("lvs_match") is False:
                 summary_parts.append("lvs=mismatch")
+            # A pass that rests on waivers says so in the one line most people
+            # read. "PASS" and "PASS with 2 waivers" are different claims.
+            if metrics.get("signoff_waived"):
+                summary_parts.append(f"waived={len(metrics['signoff_waived'])}")
         if errors:
             summary_parts.append(f"{len(errors)} errors")
 

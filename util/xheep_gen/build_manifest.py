@@ -85,6 +85,49 @@ def _ignored_source_path(path: Path) -> bool:
         return True
     if any(part.startswith(("obj_", "sim_build")) for part in path.parts):
         return True
+    # The signoff runner writes its resolved config and its resolved file list
+    # beside the config template -- they have to live there for the template's
+    # `dir::` references to keep resolving. They are run OUTPUTS, not generator
+    # sources, and `flow` is a closure root, so counting them meant a hardening
+    # run changed the identity of the very RTL bundle it was hardening. The
+    # next run then computed a hash for which no manifest existed and aborted
+    # with "no MOSAIC manifest. Generate the RTL first" -- the flow poisoning
+    # its own input, reported as a missing input.
+    if path.name.startswith((".resolved_", ".filelist_", ".generated_")):
+        return True
+    # The same argument, for the hardening INPUTS rather than the outputs.
+    #
+    # `flow/librelane/signoff_template.yaml` is a LibreLane config: it sets
+    # PnR corners, repair margins and PDN geometry. Nothing in mcu-gen or
+    # FuseSoC reads it -- its only consumers are harness/physical/hardening.py
+    # and, for the waivers, harness/skills/flow_runner.py. It cannot change one
+    # line of generated RTL.
+    #
+    # But it sits under `flow`, so editing it moved the RTL bundle hash, and
+    # the next hardening run aborted with "no MOSAIC manifest" and demanded a
+    # multi-hour regen that would reproduce byte-identical RTL. Measured: the
+    # bundles for blocka_reharden and blocka_slewonly have different hashes and
+    # `diff -rq` of their generated/ trees is empty.
+    #
+    # That is not a nuisance, it is a correctness hazard. Editing the template
+    # is exactly what a flow experiment DOES, so the cost of changing one PnR
+    # setting was a full regen -- which is how one bisect died outright and how
+    # a later untimed regen filled the disk and left a corrupt bundle. Pressure
+    # to skip the regen and reuse a stale bundle is pressure to harden RTL you
+    # did not verify.
+    #
+    # Deliberately narrow: the waivers, and `signoff_template*.yaml` so that a
+    # variant template for a one-variable experiment is covered too -- that is
+    # the case this exists for. Everything else under `flow` stays in the
+    # closure, because `flow/librelane/**/*.sv` holds the delivery wrappers,
+    # which ARE synthesised. Extend this only for a file you have confirmed no
+    # RTL generator reads.
+    if path.as_posix() == "flow/librelane/signoff_waivers.yaml" or (
+        path.parent.as_posix() == "flow/librelane"
+        and path.name.startswith("signoff_template")
+        and path.suffix == ".yaml"
+    ):
+        return True
     if path.as_posix() == "tb/mosaic_soc/soc.f" or path.name == "results.xml":
         return True
     return path.suffix in {

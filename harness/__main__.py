@@ -23,12 +23,15 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Optional
 
 from .core import SkillResult
 
 
 # Set by main() from --json: machine mode prints the raw SkillResult JSON
 # (consumed by the .omp/tools shim and tests) and exits non-zero on failure.
+from .physical.floorplan import DEFAULT_MARGIN_UM as _DEFAULT_MARGIN
+
 _JSON_MODE = False
 _PROGRESS_JSONL = False
 
@@ -51,22 +54,35 @@ def _progress(kind: str, message: str, **details):
     )
 
 
-def external_agent_prompt(driver: str, text: str) -> str:
+def external_agent_prompt(driver: str, text: str, *, surface: str = "mcp") -> str:
     """The system framing handed to an external agent harness.
 
     Public because `demo/03_blocka_from_prompt.sh` drives `claude -p` with the
     very same string: a demo that invented its own prompt would be evidence
     about the demo, not about the surface a user actually gets from
     `oh-my-soc agent`.
+
+    `surface` exists because there are now genuinely two, and telling a model
+    to use tools it has not been given is worse than either. `oh-my-soc agent
+    --driver claude` supplies the gated MCP server, so it gets "mcp". The demo
+    supplies a Bash scoped to `python3 -m harness` and no MCP server, so it
+    asks for "cli" — and is therefore a probe of prose-to-typed-flags
+    translation, NOT of the enforcement path.
     """
     if driver == "omp":
         tool_clause = ("use the oh_my_soc tool for every MOSAIC action, react "
                        "to each gate result")
-    elif driver == "claude":
+    elif driver != "claude":
+        raise ValueError(driver)
+    elif surface == "cli":
         tool_clause = ("invoke python3 -m harness commands as separate visible "
                        "Bash tool calls, react to each JSON result")
+    elif surface == "mcp":
+        tool_clause = ("use the oh-my-soc MCP tools for every MOSAIC action, "
+                       "starting with request_scope, and react to each gate "
+                       "result")
     else:
-        raise ValueError(driver)
+        raise ValueError(surface)
     return (
         "Act as the MOSAIC-SoC agent. Read the project .claude/skills cards, "
         f"make an explicit plan, {tool_clause}, and do not claim success "
@@ -74,15 +90,123 @@ def external_agent_prompt(driver: str, text: str) -> str:
     )
 
 
+# The MCP tools, as Claude Code names them once the server is loaded. Passing
+# these to --allowedTools is not belt-and-braces: without it the model keeps
+# Bash, and `python3 -m harness ...` in a Bash call bypasses the session state
+# entirely. An enforced driver that leaves the bypass open is not enforced.
+def _mcp_tool_allowlist() -> list[str]:
+    from .agent_tools import TOOL_SPECS
+    from .mcp_server import SERVER_NAME
+
+    allowed = [f"mcp__{SERVER_NAME}__{spec.name}" for spec in TOOL_SPECS]
+    if naja_scope_command():
+        # Enumerated, never wildcarded: a wildcard would silently admit any
+        # tool a future naja-scope release adds, including a writing one.
+        allowed += [f"mcp__{NAJA_SCOPE_SERVER}__{name}"
+                    for name in NAJA_SCOPE_TOOLS]
+    return allowed
+
+
+# naja-scope (najaeda/naja-scope) answers questions ABOUT a design: what drives
+# a net, the hierarchy under an instance, the combinational cone behind a pin,
+# the source line an object came from. This session needed all of those and had
+# none of them -- "what drives spi_flash_cs_o?" is the open debugging question,
+# and "what drives spi_flash_sd_io[0..3]?" is the remaining slew waiver, which
+# was reasoned about from a text report.
+#
+# THE BOUNDARY THAT MATTERS. Our own server produces EVIDENCE: gated, scope-
+# ceilinged, digest-bound. naja-scope produces FACTS. An agent that knows the
+# connectivity has not proven anything, and nothing here may treat a naja-scope
+# answer as a gate result. It is admitted as a second server precisely so the
+# distinction is visible in the config rather than implied.
+#
+# `save_snapshot` is EXCLUDED. It writes to disk, and the whole point of
+# --allowedTools is that the enforced session cannot write outside the gated
+# tools. The load_* tools are permitted: they mutate the server's own memory,
+# not the repository.
+NAJA_SCOPE_SERVER = "naja-scope"
+NAJA_SCOPE_TOOLS = (
+    "status", "load_systemverilog", "load_verilog", "load_liberty",
+    "load_primitives", "load_snapshot", "reset_universe", "resolve", "find",
+    "get_hierarchy", "get_drivers", "get_loads", "trace_cone", "get_source",
+    "get_module_card", "get_stats", "get_intent", "load_intent",
+)
+NAJA_SCOPE_EXCLUDED = ("save_snapshot",)
+
+
+def naja_scope_command() -> Optional[str]:
+    """The naja-scope entry point, if it is installed. Optional by design.
+
+    Checks the project venv explicitly. PEP 668 blocks installing into a
+    system interpreter, so naja-scope realistically lives in `.venv/bin` while
+    the harness itself is often run by `python3` -- looking only alongside
+    `sys.executable` finds nothing in the normal setup.
+    """
+    import shutil
+
+    from .core import REPO_ROOT
+
+    direct = shutil.which("naja-scope-mcp")
+    if direct:
+        return direct
+    for candidate in (Path(sys.executable).parent / "naja-scope-mcp",
+                      REPO_ROOT / ".venv" / "bin" / "naja-scope-mcp"):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def write_mcp_config(request: str, repo_root: Path, target: Path) -> Path:
+    """The --mcp-config file that binds the client to this session's ceiling.
+
+    The request is passed as an argv element rather than interpolated into a
+    shell string: it is user text, and it must not be able to become syntax.
+    """
+    from .mcp_server import SERVER_NAME
+
+    servers = {
+        SERVER_NAME: {
+            "command": sys.executable,
+            "args": ["-m", "harness", "mcp-server", "--request", request],
+            "cwd": str(repo_root),
+        }
+    }
+    scope = naja_scope_command()
+    if scope:
+        servers[NAJA_SCOPE_SERVER] = {"command": scope, "cwd": str(repo_root)}
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"mcpServers": servers}, indent=2))
+    return target
+
+
 def _external_agent_command(
-    driver: str, binary: str, prompt: str, *, interactive: bool
+    driver: str, binary: str, prompt: str, *, interactive: bool,
+    mcp_config: Optional[Path] = None,
 ) -> list[str]:
     """Select a visible external-agent surface without fake slash commands."""
 
     if driver == "omp":
         return [binary, prompt] if interactive else [binary, "--mode", "json", prompt]
     if driver == "claude":
-        return [binary, prompt] if interactive else [binary, "-p", prompt]
+        command = [binary]
+        if mcp_config is not None:
+            command += [
+                "--mcp-config", str(mcp_config),
+                # Ignore every other MCP configuration: a server the user
+                # happens to have installed is not part of this session's
+                # policy and must not be reachable from it.
+                "--strict-mcp-config",
+                "--allowedTools", *_mcp_tool_allowlist(),
+                # Belt to that brace. Bash is the bypass; name it explicitly
+                # so a future change to --allowedTools defaults cannot quietly
+                # reopen it.
+                "--disallowedTools", "Bash", "Write", "Edit", "NotebookEdit",
+            ]
+        if not interactive:
+            command.append("-p")
+        command.append(prompt)
+        return command
     raise ValueError(driver)
 
 
@@ -143,6 +267,246 @@ def _parse_kv_extras(blob: str, *, what: str) -> dict:
     return out
 
 
+def cmd_physical_intent(args):
+    """Derive the design-specific part of a hardening config."""
+    from pathlib import Path as _Path
+
+    import yaml as _yaml
+
+    from .core import REPO_ROOT as _ROOT
+    from .physical.floorplan import derive_floorplan
+    from .physical.hardening import generate_hardening_config, wrapper_path_for
+
+    if args.physical_intent_cmd == "netlist-diff":
+        from .physical.netlist import diff, load_summary, summarise_run
+
+        try:
+            import najaeda  # noqa: F401
+        except ImportError:
+            _print_result(SkillResult(
+                ok=False, skill="physical-intent",
+                summary="najaeda is not installed",
+                errors=["pip install najaeda -- it is optional, and only the "
+                        "netlist diff needs it"]))
+            return
+        summaries = []
+        for label in ("run_a", "run_b"):
+            run = _Path(getattr(args, label))
+            netlist_path, libs = summarise_run(run)
+            if netlist_path is None:
+                _print_result(SkillResult(
+                    ok=False, skill="physical-intent",
+                    summary=f"no netlist under {run}/final/nl",
+                    errors=["only a completed hardening run has one"]))
+                return
+            summaries.append(load_summary(netlist_path, libs))
+        report = diff(*summaries)
+        kinds = ", ".join(f"{k} {v:+d}" for k, v in report["by_kind"].items())
+        _print_result(SkillResult(
+            ok=True, skill="physical-intent",
+            summary=(f"{report['instances']['delta']:+d} instances; {kinds}"
+                     + ("; LOGIC CHANGED" if report["logic_changed"]
+                        else "; no logic change")),
+            details=report,
+        ), verbose=True)
+        return
+
+    if args.physical_intent_cmd == "evidence":
+        from .core import REPO_ROOT as _R
+        from .evidence.store import EvidenceInputs, EvidenceStore
+
+        store = EvidenceStore(_R / "build" / "evidence")
+        if args.run_dir:
+            found = EvidenceInputs.from_run(_Path(args.run_dir), repo_root=_R)
+            if found is None:
+                _print_result(SkillResult(
+                    ok=False, skill="physical-intent",
+                    summary=f"{args.run_dir} has no resolved.json",
+                    errors=["only a completed run records its own inputs"]))
+                return
+            held = store.lookup(found)
+            _print_result(SkillResult(
+                ok=True, skill="physical-intent",
+                summary=("evidence is current" if held else
+                         "no stored evidence for these inputs — something "
+                         "changed, or it was never recorded"),
+                details={"key": found.key(), "current": held is not None,
+                         "inputs": found.__dict__,
+                         "summary": held.summary if held else None},
+            ), verbose=True)
+            return
+        criteria = {k: v for k, v in (("pdk", args.pdk),
+                                      ("rtl_bundle", args.rtl_bundle)) if v}
+        matches = store.find(**criteria) if criteria else list(store.records())
+        _print_result(SkillResult(
+            ok=True, skill="physical-intent",
+            summary=f"{len(matches)} record(s)"
+                    + (f" matching {criteria}" if criteria else " stored"),
+            details={"records": [
+                {"key": m.key[:12], "design": m.design, "run": m.run_dir,
+                 "pdk": m.inputs.pdk, "adverse": m.summary.get("adverse")}
+                for m in matches]},
+        ), verbose=True)
+        return
+
+    if args.physical_intent_cmd == "metrics":
+        from .evidence.librelane import load_metrics
+        from .evidence.metric import unit_coverage
+        from .physical.report import signoff_summary
+
+        summary, errors = signoff_summary(
+            _Path(args.run_dir), pdk=args.pdk,
+            compare=_Path(args.compare) if args.compare else None)
+        if summary is None:
+            _print_result(SkillResult(
+                ok=False, skill="physical-intent",
+                summary=f"no metrics under {args.run_dir}", errors=errors))
+            return
+        raw, _ = load_metrics(_Path(args.run_dir))
+        typed, total = unit_coverage(raw)
+        recorded = None
+        if args.record:
+            from datetime import datetime, timezone
+
+            from .core import REPO_ROOT as _R
+            from .evidence.store import (
+                EvidenceInputs, EvidenceRecord, EvidenceStore)
+
+            found = EvidenceInputs.from_run(_Path(args.run_dir), repo_root=_R)
+            if found is None:
+                errors.append(f"{args.run_dir} has no resolved.json; "
+                              "cannot record what produced it")
+            else:
+                store = EvidenceStore(_R / "build" / "evidence")
+                path = store.put(EvidenceRecord(
+                    inputs=found, design=summary.get("design"),
+                    run_dir=str(args.run_dir), summary=summary,
+                    recorded_at=datetime.now(timezone.utc).isoformat()))
+                recorded = {"key": found.key(), "path": str(path)}
+        _print_result(SkillResult(
+            ok=True, skill="physical-intent",
+            summary=(f"{summary['design'] or args.run_dir}: "
+                     f"{summary['adverse']} adverse, "
+                     f"{typed}/{total} metrics typed"
+                     + (f", recorded {recorded['key'][:12]}" if recorded else "")),
+            errors=errors,
+            details={**summary, **({"recorded": recorded} if recorded else {})},
+        ), verbose=True)
+        return
+
+    if args.physical_intent_cmd == "watch":
+        from .physical.routability import assess, first_plateau, parse_drt_passes
+
+        run_dir = _Path(args.run_dir)
+        logs = sorted(run_dir.glob("*detailedrouting/*.log"))
+        if not logs:
+            _print_result(SkillResult(
+                ok=False, skill="physical-intent",
+                summary=f"no detailed-routing log under {run_dir}",
+                errors=["detailed routing has not started, or the run tag is "
+                        "wrong. This is not a verdict about the design"],
+            ))
+            return
+        passes = parse_drt_passes(logs[-1].read_text())
+        current = passes[-1] if passes else []
+        verdict = assess(current)
+        # Sticky: a run that plateaued and later drifted downward is still a
+        # run the guard would have killed. Assessing only the tail called the
+        # eleven-hour failure "converging".
+        plateaued_at = first_plateau(current)
+        abort = verdict.should_abort or plateaued_at is not None
+        summary = f"{verdict.state}: {verdict.reason}"
+        if plateaued_at is not None and not verdict.should_abort:
+            summary = (f"plateaued at iteration {plateaued_at} (now "
+                       f"{verdict.state}): {verdict.reason}")
+        _print_result(SkillResult(
+            # A plateau is a real answer, so `ok` reports whether the
+            # assessment succeeded, not whether the news is good.
+            ok=True, skill="physical-intent",
+            summary=summary,
+            details={
+                "state": verdict.state,
+                "should_abort": abort,
+                "first_plateau_iteration": plateaued_at,
+                "iterations": verdict.iterations,
+                "initial": verdict.initial,
+                "latest": verdict.latest,
+                "passes": len(passes),
+                "log": str(logs[-1]),
+            },
+        ), verbose=True)
+        if args.fail_on_plateau and abort:
+            raise SystemExit(3)
+        return
+
+    # Validated, not just parsed. This used to be a bare `.get("soc")`: a
+    # config with a typo'd key, an unknown core or a bad topology produced a
+    # die size anyway, and the first sign of trouble was hours into a flow.
+    from .intent import DesignIntent
+
+    document = _yaml.safe_load(_Path(args.config).read_text()) or {}
+    soc, config_errors = DesignIntent.from_config(document)
+    if soc is None:
+        _print_result(SkillResult(
+            ok=False, skill="physical-intent",
+            summary=f"{args.config} is not a valid SoC config",
+            errors=config_errors,
+        ), verbose=True)
+        return
+
+    if args.physical_intent_cmd == "floorplan":
+        floorplan, errors = derive_floorplan(
+            soc, target_utilisation=args.utilisation, margin_um=args.margin)
+        result = SkillResult(
+            ok=floorplan is not None,
+            skill="physical-intent",
+            summary=(
+                f"die {floorplan.die_side_um:.1f} um square "
+                f"({floorplan.die_area_mm2:.4f} mm2), {floorplan.basis}"
+                if floorplan else "cannot size a die"
+            ),
+            errors=errors,
+            details=({} if floorplan is None else {
+                "die_side_um": round(floorplan.die_side_um, 2),
+                "die_area_mm2": round(floorplan.die_area_mm2, 4),
+                "core_side_um": round(floorplan.core_side_um, 2),
+                "logic_um2": floorplan.logic_um2,
+                "target_utilisation": floorplan.target_utilisation,
+                "basis": floorplan.basis,
+                "reason": floorplan.reason,
+                "references": list(floorplan.references),
+                "warnings": list(floorplan.warnings),
+                "librelane": floorplan.as_librelane(),
+            }),
+        )
+        _print_result(result, verbose=True)
+        return
+
+    text, errors = generate_hardening_config(
+        soc, args.design, repo_root=_ROOT,
+        target_utilisation=args.utilisation, margin_um=args.margin,
+        clock_period_override=args.clock_period,
+    )
+    if text is not None and args.output:
+        _Path(args.output).write_text(text)
+    elif text is not None:
+        print(text)
+    _print_result(SkillResult(
+        ok=text is not None,
+        skill="physical-intent",
+        summary=(f"hardening config for {args.design}"
+                 + (f" -> {args.output}" if args.output and text else "")
+                 if text is not None else
+                 f"could not generate a hardening config for {args.design}"),
+        errors=errors,
+        details=({} if text is None else {
+            "design": args.design,
+            "output": args.output,
+            "wrapper": wrapper_path_for(args.design),
+        }),
+    ))
+
+
 def cmd_config_author(args):
     from .skills.config_author import ConfigAuthor
     author = ConfigAuthor()
@@ -201,6 +565,7 @@ def cmd_config_author(args):
             output_path=Path(args.output) if args.output else None,
             scratchpad_bytes=args.scratchpad_bytes,
             platform=platform or None,
+            target_clock_mhz=args.target_clock_mhz,
         )
         _print_result(result, verbose=True)
 
@@ -308,6 +673,26 @@ def cmd_soc_from_prompt(args):
         _print_result(result, verbose=True)
 
 
+def cmd_mcp_server(args):
+    """Serve the gated registry over stdio until the client closes it.
+
+    Nothing human-readable may reach stdout here: it carries JSON-RPC frames,
+    and one stray line corrupts the session for the client.
+    """
+    from .core import REPO_ROOT as _ROOT
+    from .mcp_server import MCPServer, build_session
+
+    session = build_session(
+        args.request, repo_root=_ROOT,
+        required_evidence=args.required_evidence)
+    print(
+        f"oh-my-soc MCP server · scope ceiling '{session.authorized_scope}' "
+        f"(locked) · {len(session.registry.specs)} tools",
+        file=sys.stderr, flush=True,
+    )
+    raise SystemExit(MCPServer(session).serve_forever())
+
+
 def cmd_setup(args):
     from .skills.setup_wizard import SetupWizard
     wiz = SetupWizard()
@@ -407,14 +792,61 @@ def cmd_agent(args):
             )
             _print_result(result, verbose=True)
             return
+        # WP-7. This handoff used to be unconditional, and everything the
+        # harness knows about authorization stayed behind: no ceiling, no
+        # evidence binding, no completion gate. A driver may now launch only
+        # if the gates travel with it.
+        repo_root = Path(__file__).resolve().parents[1]
+        mcp_config = None
+        if driver == "claude":
+            from .agent import classify_request_scope
+            from .mcp_server import SERVER_NAME
+
+            scope = classify_request_scope(text)
+            mcp_config = write_mcp_config(
+                text, repo_root,
+                repo_root / "build" / "agent" / "mcp" / "claude.json")
+            print(
+                f"Enforced session · scope ceiling '{scope}' · tools via the "
+                f"{SERVER_NAME} MCP server (Bash/Write/Edit disabled)",
+                flush=True,
+            )
+        elif not args.unenforced:
+            # oh-my-pi speaks no MCP -- `omp --help` has no such flag -- so
+            # there is no way to put the gates in front of it. Its .omp/tools
+            # shim calls the CLI directly, which never touches AgentState.
+            # Refuse rather than launch with the policy silently absent.
+            _print_result(SkillResult(
+                ok=False,
+                skill="agent",
+                summary=f"driver '{driver}' cannot enforce the scope gate",
+                errors=[
+                    f"{driver} does not support MCP, so the authorization "
+                    "ceiling, evidence binding and completion gate do not "
+                    "apply to anything it does",
+                    "use --driver claude for an enforced session, or "
+                    "--driver api / deterministic for the built-in gated loop",
+                    "pass --unenforced to proceed anyway, accepting that no "
+                    "gate applies",
+                ],
+            ), verbose=True)
+            return
+        else:
+            print(
+                f"WARNING: '{driver}' has no MCP support. The scope ceiling, "
+                "evidence binding and completion gate DO NOT APPLY to this "
+                "session. Nothing it reports is gated evidence.",
+                file=sys.stderr, flush=True,
+            )
         command = _external_agent_command(
-            driver, binary, prompt, interactive=interactive
+            driver, binary, prompt, interactive=interactive,
+            mcp_config=mcp_config,
         )
         print(
             f"Handing off to {driver} {'interactive UI' if interactive else 'event stream'}…",
             flush=True,
         )
-        raise SystemExit(subprocess.call(command, cwd=str(Path(__file__).resolve().parents[1])))
+        raise SystemExit(subprocess.call(command, cwd=str(repo_root)))
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     journal = JsonlJournal(
@@ -613,6 +1045,69 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="skill", help="Skill to use")
 
+    # physical-intent
+    pi = subparsers.add_parser(
+        "physical-intent",
+        help="Derive the design-specific part of a hardening config")
+    pi_sub = pi.add_subparsers(dest="physical_intent_cmd", required=True)
+    for name, blurb in (("floorplan", "Size a die from the design"),
+                        ("harden", "Emit a complete hardening config")):
+        sp = pi_sub.add_parser(name, help=blurb)
+        sp.add_argument("--config", required=True, help="mosaic.yaml to size")
+        # No default: omitting it means "use the densest target this design
+        # size has been shown to route at", which varies with hart count. A
+        # fixed default is what sized the 4-hart die that never routed.
+        sp.add_argument("--utilisation", type=float, default=None,
+                        help="target post-CTS utilisation (default: the "
+                             "highest demonstrated routable value for this "
+                             "design size)")
+        sp.add_argument("--margin", type=float, default=_DEFAULT_MARGIN,
+                        help="ring margin per side, um (default %(default)s)")
+        if name == "harden":
+            sp.add_argument("--design", required=True,
+                            help="DESIGN_NAME; must equal the top module name")
+            sp.add_argument("--output", help="write here instead of stdout")
+            sp.add_argument("--clock-period", type=float,
+                            help="ns; overrides objectives.target_clock_mhz")
+
+    # `watch` takes a run directory, not a config: it reads what routing is
+    # doing rather than predicting what it will do.
+    sp_watch = pi_sub.add_parser(
+        "watch", help="Assess whether a run's detailed routing will converge")
+    sp_watch.add_argument("--run-dir", required=True,
+                          help="LibreLane run directory (runs/<tag>)")
+    sp_watch.add_argument(
+        "--fail-on-plateau", action="store_true",
+        help="exit 3 when the trajectory has plateaued, so a caller can act")
+
+    # `metrics` reads a finished run and reports typed values. Comparing two
+    # runs by hand is how this session repeatedly derived numbers in prose.
+    sp_metrics = pi_sub.add_parser(
+        "metrics", help="Typed signoff metrics from a run, with units")
+    sp_metrics.add_argument("--run-dir", required=True,
+                            help="LibreLane run directory (runs/<tag>)")
+    sp_metrics.add_argument("--pdk", default="gf180mcuD",
+                            help="PDK the run used; recorded on every metric")
+    sp_metrics.add_argument("--compare",
+                            help="a second run directory to diff against")
+    sp_metrics.add_argument(
+        "--record", action="store_true",
+        help="store this run's evidence, keyed on RTL bundle, config, PDK, "
+             "tool image and parser version")
+
+    sp_nd = pi_sub.add_parser(
+        "netlist-diff",
+        help="Structurally diff two hardened netlists (needs najaeda)")
+    sp_nd.add_argument("--run-a", required=True, help="baseline run directory")
+    sp_nd.add_argument("--run-b", required=True, help="run to compare")
+
+    sp_ev = pi_sub.add_parser(
+        "evidence", help="Query the content-addressed evidence store")
+    sp_ev.add_argument("--run-dir",
+                       help="ask whether THIS run's evidence is still current")
+    sp_ev.add_argument("--pdk", help="list records measured on this PDK")
+    sp_ev.add_argument("--rtl-bundle", help="list records from this RTL bundle")
+
     # config-author
     ca = subparsers.add_parser("config-author", help="Generate/validate mosaic.yaml")
     ca_sub = ca.add_subparsers(dest="config_author_cmd", required=True)
@@ -641,6 +1136,12 @@ def main():
     ca_gen.add_argument("--peripheral", help="Comma-separated peripherals")
     ca_gen.add_argument("--preset", help="Use a named preset")
     ca_gen.add_argument("--output", help="Output path")
+    ca_gen.add_argument(
+        "--target-clock-mhz", type=float, default=None,
+        help="Target clock in MHz. DESIGN INTENT: physical-intent harden "
+             "derives CLOCK_PERIOD from it, so the frequency lives in the SoC "
+             "config rather than in a hand-edited hardening config. A request, "
+             "not a result — STA decides whether it was met")
     ca_gen.add_argument(
         "--scratchpad-bytes", type=int, default=None,
         help="Flip-flop scratchpad size. Required reading for a part with "
@@ -859,6 +1360,24 @@ def main():
     ag.add_argument("--quiet", action="store_true", help="Write the journal without terminal events")
     ag.add_argument("--no-color", action="store_true")
     ag.add_argument("--no-tool-output", action="store_true", help="Hide live child lines but retain results")
+    ag.add_argument(
+        "--unenforced",
+        action="store_true",
+        help="Launch a driver that cannot enforce the scope gate, accepting "
+             "that no authorization ceiling applies to it",
+    )
+
+    # mcp-server — the enforced surface for external clients
+    mcp = subparsers.add_parser(
+        "mcp-server",
+        help="Serve the gated tool registry to an MCP client over stdio")
+    mcp.add_argument(
+        "--request", required=True,
+        help="the user's request; the scope ceiling is derived from it and "
+             "locked before any client connects")
+    mcp.add_argument(
+        "--required-evidence", default="auto",
+        help="override the derived ceiling (default: auto-classify)")
 
     # topo-viz
     tv = subparsers.add_parser("topo-viz",
@@ -904,6 +1423,7 @@ def main():
     )
 
     dispatch = {
+        "physical-intent": cmd_physical_intent,
         "config-author": cmd_config_author,
         "flow-runner": cmd_flow_runner,
         "drc-triage": cmd_drc_triage,
@@ -915,6 +1435,7 @@ def main():
         "tb-matrix": cmd_tb_matrix,
         "setup": cmd_setup,
         "agent": cmd_agent,
+        "mcp-server": cmd_mcp_server,
     }
 
     dispatch[args.skill](args)

@@ -42,6 +42,12 @@ BLOCKA_ARGS = [
     "--platform", "debug=false,plic=false,spi_mode=xip_only",
     "--platform", "multicore_timer=false,gpio_ao=false",
     "--platform", "ao_rv_timer=false,ao_fast_intr=false",
+    # Design intent, not a peripheral: physical-intent harden derives
+    # CLOCK_PERIOD from this. Added when the frozen config gained
+    # soc.objectives.target_clock_mhz -- the typed surface has to be able to
+    # reach every field of the config it claims to reproduce, or the claim
+    # quietly narrows to "every field except the ones we cannot express".
+    "--target-clock-mhz", "25",
 ]
 
 
@@ -141,10 +147,25 @@ def test_external_agent_prompt_covers_both_harnesses():
         assert ".claude/skills" in framing
         assert "without deterministic evidence" in framing
     # Each harness is told to use ITS OWN tool surface.
-    assert "python3 -m harness" in claude
     assert "oh_my_soc tool" in omp
+
+    # Claude now has two, and the framing must match what it was actually
+    # given. `oh-my-soc agent --driver claude` supplies the gated MCP server
+    # and disallows Bash, so the default framing must not tell it to shell
+    # out -- that instruction described the bypass Phase 4 closed.
+    assert "MCP" in claude and "request_scope" in claude
+    assert "python3 -m harness" not in claude
+
+    # The demo supplies a scoped Bash and no MCP server, so it asks for the
+    # CLI framing explicitly.
+    cli = external_agent_prompt("claude", request, surface="cli")
+    assert "python3 -m harness" in cli
+    assert "MCP" not in cli
+
     with pytest.raises(ValueError):
         external_agent_prompt("api", request)
+    with pytest.raises(ValueError):
+        external_agent_prompt("claude", request, surface="telepathy")
 
 
 def test_every_demo_is_executable_as_documented():

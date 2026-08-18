@@ -119,6 +119,8 @@ sw/device/lib/drivers/pad_control/pad_control_regs.md
 # Openroad
 flow/OpenROAD-flow-scripts
 
+flow/librelane/experimental/runs/*
+
 # Automatically generated docs
 /docs/source/Configuration/xheep_gen
 

@@ -129,6 +129,88 @@ def test_generic_sweep_ignores_non_numeric_values():
     assert adverse_metrics({"some__error__note": "see log"}) == []
 
 
+# ── iteration traces are convergence telemetry, not results ──────────
+#
+# Ground truth from the Block A signoff run: the detailed router reported
+# route__drc_errors__iter:0..7 as 11, 4, 3, 7, 2, 1, 1 while converging, and
+# route__drc_errors = 0 as the final answer. Reporting the trace made the gate
+# fail the design we taped out, for 7 reasons that were a router working.
+
+def test_converged_iteration_trace_is_not_adverse():
+    assert adverse_metrics({
+        "route__drc_errors": 0,
+        "route__drc_errors__iter:0": 11,
+        "route__drc_errors__iter:1": 4,
+        "route__drc_errors__iter:7": 1,
+    }) == []
+
+
+def test_iteration_trace_is_reported_when_the_final_value_is_missing():
+    """No aggregate means the trace is the only evidence there is."""
+    found = dict(adverse_metrics({"route__drc_errors__iter:3": 5}))
+    assert found == {"route__drc_errors": 5.0}
+
+
+def test_iteration_trace_is_reported_when_the_run_did_not_converge():
+    found = dict(adverse_metrics({
+        "route__drc_errors": 2,
+        "route__drc_errors__iter:0": 9,
+    }))
+    assert found == {"route__drc_errors": 9.0}
+
+
+# ── corners collapse to their worst ──────────────────────────────────
+
+def test_corners_collapse_to_the_worst_single_finding():
+    """591 slew violations are one finding, not one per corner."""
+    found = adverse_metrics({
+        "design__max_slew_violation__count": 591,
+        "design__max_slew_violation__count__corner:max_ss_125C_4v50": 591,
+        "design__max_slew_violation__count__corner:min_ss_125C_4v50": 17,
+        "design__max_slew_violation__count__corner:nom_ss_125C_4v50": 79,
+    })
+    assert found == [("design__max_slew_violation__count", 591.0)]
+
+
+def test_a_corner_only_metric_is_still_reported():
+    """Collapsing must never drop a finding that lacks an aggregate."""
+    found = dict(adverse_metrics(
+        {"design__future_violation__count__corner:max_ss_125C_4v50": 3}
+    ))
+    assert found == {"design__future_violation__count@max_ss_125C_4v50": 3.0}
+
+
+def test_worst_corner_wins_over_a_smaller_aggregate():
+    found = dict(adverse_metrics({
+        "design__x_violation__count": 2,
+        "design__x_violation__count__corner:slow": 40,
+    }))
+    assert found == {"design__x_violation__count@slow": 40.0}
+
+
+def test_per_corner_negative_slack_is_caught():
+    """`...__ws__corner:<c>` does not end in `__ws`.
+
+    Testing the raw key meant every corner-qualified slack metric silently
+    escaped the sweep -- i.e. the one rule that exists to catch timing was blind
+    at exactly the granularity LibreLane reports timing.
+    """
+    found = dict(adverse_metrics(
+        {"timing__setup__ws__corner:max_ss_125C_4v50": -1.25}
+    ))
+    assert found == {"timing__setup__ws@max_ss_125C_4v50": -1.25}
+
+
+def test_reductions_do_not_blind_the_version_drift_safety_net():
+    """The whole point of the sweep survives both reductions."""
+    found = dict(adverse_metrics({
+        "brand__new__violation__count__corner:tt": 1,
+        "renamed__error__count__iter:0": 6,
+    }))
+    assert found == {"brand__new__violation__count@tt": 1.0,
+                     "renamed__error__count": 6.0}
+
+
 # ── verdicts from a run ──────────────────────────────────────────────
 
 def test_clean_run_passes(tmp_path):

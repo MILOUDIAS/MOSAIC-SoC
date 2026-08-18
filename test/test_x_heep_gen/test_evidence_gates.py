@@ -296,3 +296,127 @@ def test_boolean_core_params_are_coerced_to_int_in_template():
     assert not bare, (
         f"boolean params rendered without int() coercion: {sorted(set(bare))}"
     )
+
+
+def test_every_evidence_module_imports_standalone():
+    """`import harness.evidence.signoff` must work as the FIRST harness import.
+
+    It did not. `harness/evidence/signoff.py` imported the report parsers from
+    `harness.skills.drc_triage`, whose package __init__ imports flow_runner,
+    which imports harness.evidence.signoff -- a cycle that resolved only when
+    `harness.skills` happened to be imported first. Every test in this suite
+    reaches skills first, so the whole suite passed while
+
+        python3 -c "import harness.evidence.signoff"
+
+    raised ImportError. Any consumer that starts from the evidence layer -- an
+    MCP server being the obvious one -- would have hit it immediately.
+
+    Each module is imported in a SEPARATE interpreter, because once any harness
+    module is in sys.modules the cycle is masked.
+    """
+    import subprocess
+    import sys
+
+    from harness.core import REPO_ROOT
+
+    modules = [
+        "harness.evidence",
+        "harness.evidence.signoff",
+        "harness.evidence.librelane",
+        "harness.evidence.gate_guard",
+        "harness.evidence.status",
+        "harness.skills.flow_runner",
+    ]
+    broken = {}
+    for module in modules:
+        result = subprocess.run(
+            [sys.executable, "-c", f"import {module}"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            broken[module] = result.stderr.strip().splitlines()[-1]
+    assert not broken, f"modules that cannot be imported first: {broken}"
+
+
+def test_pyproject_lists_every_harness_subpackage():
+    """setuptools ships only what `packages` names, and it was wrong.
+
+    `harness.evidence` was absent, so a built wheel contained
+    harness/skills/flow_runner.py -- which imports harness.evidence.gate_guard
+    at module load -- and no evidence modules at all. An editable install hid
+    it, and nothing in this suite looked, because the tests import from the
+    source tree.
+    """
+    import pathlib
+    import tomllib
+
+    from harness.core import REPO_ROOT
+
+    declared = set(
+        tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+        ["tool"]["setuptools"]["packages"]
+    )
+    on_disk = {
+        ".".join(p.parent.relative_to(REPO_ROOT).parts)
+        for p in (REPO_ROOT / "harness").rglob("__init__.py")
+        if "__pycache__" not in p.parts
+    }
+    missing = sorted(on_disk - declared)
+    assert not missing, (
+        f"subpackages that exist but would be absent from a wheel: {missing}"
+    )
+
+
+@pytest.mark.slow
+def test_a_built_wheel_actually_runs(tmp_path):
+    """WP-0: `pip install` the wheel and run the console script elsewhere.
+
+    Marked slow because it builds a wheel and creates a venv (~20 s), but it is
+    the only test that can catch this class of defect: every other test imports
+    from the source tree, where cwd puts both `harness` and `util` on sys.path
+    and the packaging is therefore never exercised.
+
+    Two defects hid behind exactly that. `harness.evidence` was absent from
+    `packages`, so the wheel shipped flow_runner.py without the module it
+    imports at load time. And `harness.core` imports `util.xheep_gen.
+    core_registry` while pyproject declared util/ "not part of the app", so the
+    console script died with ModuleNotFoundError before doing anything -- for
+    an editable install too, since a console script does not put cwd on the
+    path.
+    """
+    import subprocess
+    import sys
+
+    from harness.core import REPO_ROOT
+
+    wheelhouse = tmp_path / "wheelhouse"
+    build = subprocess.run(
+        [sys.executable, "-m", "pip", "wheel", "--no-deps", "-q",
+         "-w", str(wheelhouse), str(REPO_ROOT)],
+        capture_output=True, text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheels = list(wheelhouse.glob("oh_my_soc-*.whl"))
+    assert wheels, "no wheel was built"
+
+    venv = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True,
+                   capture_output=True)
+    pip = venv / "bin" / "pip"
+    install = subprocess.run(
+        [str(pip), "install", "-q", "PyYAML", "Mako", str(wheels[0])],
+        capture_output=True, text=True,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    # Run from tmp_path: nothing of the repo is on sys.path or in cwd.
+    result = subprocess.run(
+        [str(venv / "bin" / "oh-my-soc"), "config-author", "presets"],
+        cwd=str(tmp_path), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, (
+        "the installed console script failed outside the repo:\n"
+        + result.stdout + result.stderr
+    )
+    assert "presets available" in result.stdout

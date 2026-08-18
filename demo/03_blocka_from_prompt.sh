@@ -43,7 +43,7 @@ PROMPT="a tapeout SoC: one serv titan rv32ic compressed with CSRs, \
 one serv atlas rv32i without CSRs boot 0x40010000, \
 no sram, 128 byte scratchpad, 1 kb boot rom, no DMA, no debug, no PLIC, \
 no multicore timer, no gpio, no rv timer, no fast interrupts, \
-XIP from flash, uart only, TDU dynamic"
+XIP from flash, uart only, TDU dynamic, at 25 MHz"
 
 echo "═══ 1. the prompt ═══"
 echo "$PROMPT" | fold -s -w 78 | sed 's/^/  /'
@@ -127,12 +127,19 @@ else
   rm -f configs/agent_probe.yaml
   # The framing is the harness's own, imported rather than retyped, so this
   # demo cannot drift from what `oh-my-soc agent` actually sends.
+  #
+  # surface="cli" because this step gives the model a Bash scoped to
+  # `python3 -m harness` and NO MCP server. It probes whether a model can
+  # translate prose into correct typed flags -- it is not the enforced path.
+  # `oh-my-soc agent --driver claude` uses the gated MCP session instead; see
+  # harness/mcp_server.py.
   AGENT_PROMPT="$(python3 - "$AGENT" "$PROMPT" <<'PY'
 import sys
 sys.path.insert(0, ".")
 from harness.__main__ import external_agent_prompt
 driver, prompt = sys.argv[1], sys.argv[2]
-print(external_agent_prompt(driver if driver == "omp" else "claude", f"""{prompt}
+print(external_agent_prompt(driver if driver == "omp" else "claude",
+                            surface="cli", text=f"""{prompt}
 
 Author it with `python3 -m harness config-author generate --name agent_probe`
 and explicit typed flags. Do NOT use `soc-from-prompt`: that is the

@@ -66,6 +66,14 @@ _ADVERSE_KEY = re.compile(r"(?i)violation|error|_vio__")
 # Keys that match the sweep but are descriptive rather than counts.
 _ADVERSE_EXEMPT = re.compile(r"(?i)__ws$|__tns$|_slack$")
 
+# LibreLane decorates a base metric with two orthogonal suffixes:
+#   <base>__corner:<corner>   the same measurement at one PVT corner
+#   <base>__iter:<n>          the value during optimisation iteration n
+# Both must be stripped before a key is classified, and both used to defeat
+# the sweep. See `adverse_metrics` for what each one meant in practice.
+_CORNER_SUFFIX = re.compile(r"__corner:([^:]+)$")
+_ITER_SUFFIX = re.compile(r"__iter:\d+$")
+
 _STEP_GLOBS = {
     "magic_drc": "*-magic-drc/reports/drc_violations.magic.rpt",
     "klayout_drc": "*-klayout-drc/reports/*.rpt",
@@ -83,6 +91,11 @@ class LibreLaneRun:
     metrics: Dict[str, Any] = field(default_factory=dict)
     metrics_source: Optional[str] = None
     reports: Dict[str, Path] = field(default_factory=dict)
+    # Read from the run's own resolved config, never supplied by the caller:
+    # a waiver is scoped to a design, so the identity it is matched against
+    # must come from the artefact being judged rather than from whoever is
+    # asking for a verdict.
+    design_name: Optional[str] = None
 
     @property
     def has_metrics(self) -> bool:
@@ -157,6 +170,23 @@ def locate_reports(run_dir: Path) -> Dict[str, Path]:
     return found
 
 
+def load_design_name(run_dir: Path) -> Optional[str]:
+    """``DESIGN_NAME`` from the run's own resolved configuration."""
+    for name in ("resolved.json", "config.json"):
+        path = run_dir / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            value = data.get("DESIGN_NAME")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
 def load_run(runs_dir: Path) -> Optional[LibreLaneRun]:
     """Locate the newest run under ``runs_dir`` and read its evidence."""
     run_dir = find_latest_run(runs_dir)
@@ -168,6 +198,7 @@ def load_run(runs_dir: Path) -> Optional[LibreLaneRun]:
         metrics=metrics,
         metrics_source=source,
         reports=locate_reports(run_dir),
+        design_name=load_design_name(run_dir),
     )
 
 
@@ -198,26 +229,90 @@ def sum_metrics(metrics: Dict[str, Any], keys) -> Tuple[List[str], Optional[floa
     return (matched, total) if matched else ([], None)
 
 
+def _split_key(key: str) -> Tuple[str, Optional[str], bool]:
+    """Split a LibreLane metric key into ``(base, corner, is_iteration)``."""
+    corner = None
+    match = _CORNER_SUFFIX.search(key)
+    if match:
+        corner = match.group(1)
+        key = key[: match.start()]
+    is_iteration = bool(_ITER_SUFFIX.search(key))
+    if is_iteration:
+        key = _ITER_SUFFIX.sub("", key)
+    return key, corner, is_iteration
+
+
+def _is_adverse(base: str, value: float) -> bool:
+    """Does this value of this base metric indicate a problem?
+
+    Takes the BASE key, so that a per-corner worst-slack key is still tested
+    against the slack rule. Testing the raw key instead silently exempted every
+    corner-qualified slack metric, because
+    ``timing__setup__ws__corner:nom_tt_025C_5v00`` does not end in ``__ws``.
+    """
+    if _ADVERSE_KEY.search(base) and not _ADVERSE_EXEMPT.search(base):
+        return value > 0
+    if base.endswith("__ws"):
+        return value < 0
+    return False
+
+
 def adverse_metrics(metrics: Dict[str, Any]) -> List[Tuple[str, float]]:
     """Every metric that indicates a problem, including unknown keys.
 
-    Two rules:
+    Two rules, applied to the base key after ``__corner:``/``__iter:`` are
+    stripped:
 
     - any key matching ``violation`` / ``error`` / ``_vio__`` whose value is a
       number greater than zero;
     - any worst-slack key whose value is negative.
 
     The first is the version-drift safety net: a LibreLane upgrade that renames
-    or adds a violation counter still fails the gate.
+    or adds a violation counter still fails the gate. That property is why the
+    sweep is deliberately pattern-based rather than a fixed key list, and the
+    two reductions below are shaped so it survives them.
+
+    **Iteration traces are not results.** The detailed router reports
+    ``route__drc_errors__iter:0..N`` as it converges — on the Block A signoff
+    run: 11, 4, 3, 7, 2, 1, 1 — alongside the final ``route__drc_errors = 0``.
+    A router that converges to zero is a router working correctly, so an
+    ``__iter:`` key is suppressed when the final aggregate exists and is clean.
+    If the aggregate is missing or is itself adverse, the iteration values are
+    reported: absent a final answer, the trace is the only evidence there is.
+
+    **Corners are collapsed to their worst.** One real violation class otherwise
+    lands once per corner plus once for the aggregate, so a single finding is
+    reported four times. Entries are grouped by base metric and reduced to the
+    worst magnitude, tagged ``base@corner`` when a corner supplied it. A metric
+    that exists *only* per-corner is still reported — nothing is dropped for
+    lacking an aggregate.
     """
-    adverse: List[Tuple[str, float]] = []
+    values: Dict[str, float] = {}
     for key, raw in metrics.items():
         value = _numeric(raw)
-        if value is None:
+        if value is not None:
+            values[key] = value
+
+    worst_by_base: Dict[str, Tuple[float, Optional[str]]] = {}
+    for key, value in values.items():
+        base, corner, is_iteration = _split_key(key)
+        if not _is_adverse(base, value):
             continue
-        if _ADVERSE_KEY.search(key) and not _ADVERSE_EXEMPT.search(key):
-            if value > 0:
-                adverse.append((key, value))
-        elif key.endswith("__ws") and value < 0:
-            adverse.append((key, value))
-    return sorted(adverse)
+        if is_iteration:
+            final = values.get(base)
+            if final is not None and not _is_adverse(base, final):
+                continue
+        previous = worst_by_base.get(base)
+        if (
+            previous is None
+            or abs(value) > abs(previous[0])
+            # On a tie prefer the aggregate, so the reported name is the
+            # canonical one rather than whichever corner was seen first.
+            or (abs(value) == abs(previous[0]) and corner is None)
+        ):
+            worst_by_base[base] = (value, corner)
+
+    return sorted(
+        (f"{base}@{corner}" if corner else base, value)
+        for base, (value, corner) in worst_by_base.items()
+    )

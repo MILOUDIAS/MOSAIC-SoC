@@ -17,3 +17,49 @@ project:
   discord: "MILOUDIAS, kewenlee, yassinehk"
   description: "Config-to-GDSII generator for heterogeneous multi-core RISC-V SoCs, driven by an LLM agent, targeting the GF180MCU open PDK"
   lvs_config: "lvs_config.json"
+
+pins:
+  - name: clk_i #clock
+    io_type: input_schmitt
+  - name: rst_ni #reset, active low
+    io_type: input_cmos
+  - name: boot_select_i #boot source select
+    io_type: input_cmos
+  - name: execute_from_flash_i #XIP enable
+    io_type: input_cmos
+  - name: uart_rx_i # UART receive
+    io_type: input_cmos
+  - name: uart_tx_o # UART transmit
+    io_type: bidirectional
+  - name: spi_flash_sck_o # QSPI clock
+    io_type: bidirectional
+  - name: spi_flash_cs_o # QSPI chip select
+    io_type: bidirectional
+  - name: spi_flash_sd_io[0] # QSPI data 0 (true tristate, bufz_4)
+    io_type: bidirectional
+  - name: spi_flash_sd_io[1] # QSPI data 1 (true tristate, bufz_4)
+    io_type: bidirectional
+  - name: spi_flash_sd_io[2] # QSPI data 2 (true tristate, bufz_4)
+    io_type: bidirectional
+  - name: spi_flash_sd_io[3] # QSPI data 3 (true tristate, bufz_4)
+    io_type: bidirectional
+  - name: status_valid_o # exit-value strobe
+    io_type: bidirectional
+  - name: status_o[0] # status 0 observability pin
+    io_type: bidirectional
+  - name: status_o[1] # status 1 observability pin
+    io_type: bidirectional
+  - name: status_o[2]
+    io_type: bidirectional
+  - name: status_o[3]
+    io_type: bidirectional
+  - name: status_o[4]
+    io_type: bidirectional
+  - name: status_o[5]
+    io_type: bidirectional
+  - name: status_o[6]
+    io_type: bidirectional
+  - name: vdd
+    io_type: power
+  - name: vss
+    io_type: ground # note: due to a common ground connection, ground pads are generally not needed.

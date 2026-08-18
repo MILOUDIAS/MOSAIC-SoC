@@ -1580,241 +1580,26 @@ class AgentRunner:
         )
         return result
 
+    # The gates themselves live in harness/gates.py so that the MCP session
+    # enforces the same ones. Two copies of an authorization rule is one copy
+    # too many; see that module's docstring.
     def _gate_precondition(
         self, name: str, arguments: Mapping[str, Any]
     ) -> Optional[SkillResult]:
-        if name == "request_scope":
-            requested = str(arguments.get("scope", ""))
-            authorized = self.state.required_scope
-            if self.state.scope_locked and requested != authorized:
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary=f"request scope is locked to {authorized}",
-                    errors=["the user-derived authorization ceiling cannot be changed by the model"],
-                )
-            return None
-        if name != "flow_run":
-            if self._scope_required and self.state.scope is None:
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary="tool blocked until request_scope classifies the requested outcome",
-                    errors=["call request_scope first"],
-                )
-            effect_error = self._scope_effect_precondition(name, arguments)
-            if effect_error is not None:
-                return effect_error
-            if name in {"soc_generate", "config_generate"} and not self.state.config_writes_allowed:
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary="existing-config verification does not authorize config regeneration",
-                    errors=["explicitly request create/update/regenerate to permit config writes"],
-                )
-            if name == "soc_generate" and (
-                str(arguments.get("request", "")) != self.state.user_request
-                or not self.state.planned_request_ok
-            ):
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary="soc_generate requires a successful plan for the exact user request",
-                    errors=["run soc_plan with the unchanged user request first"],
-                )
-            if (
-                name == "config_generate"
-                and not self.state.requested_configs
-                and not self.state.planned_request_ok
-            ):
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary="structured config generation requires the exact user plan",
-                    errors=["run soc_plan before correcting its topology"],
-                )
-            if name == "tb_generate" and not self.state.testbench_writes_allowed:
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary="running existing tests does not authorize testbench regeneration",
-                    errors=["explicitly request testbench generation to permit source writes"],
-                )
-            if name == "tb_wake_demo" and not self.state.wake_demo_allowed:
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary="existing-config verification does not authorize wake-demo config generation",
-                    errors=["use flow_run on the requested config or explicitly request a wake demo"],
-                )
-            if name == "wrapper_scaffold" and not self.state._analysis_current(
-                str(arguments.get("analysis", ""))
-            ):
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary="wrapper scaffold requires current session analysis evidence",
-                    errors=["run wrapper_analyze with a persisted build/wrapper_smith output first"],
-                )
-            if name == "wrapper_scaffold" and arguments.get("vendor_from"):
-                analysis_path, _ = self.state.fingerprint(arguments.get("analysis", ""))
-                analyzed_root = self.state.wrapper_analysis_roots.get(analysis_path)
-                vendor_root = str(self.state._path(arguments["vendor_from"]))
-                if analyzed_root != vendor_root:
-                    return SkillResult(
-                        ok=False,
-                        skill=name,
-                        summary="wrapper vendor source does not match analyzed RTL root",
-                        errors=["analyze the exact vendor_from tree before scaffolding"],
-                    )
-            if name == "wrapper_scaffold" and bool(arguments.get("apply", False)):
-                core = str(arguments.get("core", ""))
-                existing_vendor = (
-                    self.state.repo_root
-                    / "hw"
-                    / "vendor"
-                    / "mosaic"
-                    / core
-                    / f"{core}.core"
-                ).is_file()
-                if not arguments.get("vendor_from") and not existing_vendor:
-                    return SkillResult(
-                        ok=False,
-                        skill=name,
-                        summary="wrapper apply requires a complete vendor RTL core",
-                        errors=["provide vendor_from or install hw/vendor/mosaic/<core>/<core>.core"],
-                    )
-                if not arguments.get("vendor_from") and existing_vendor:
-                    analysis_path, _ = self.state.fingerprint(
-                        arguments.get("analysis", "")
-                    )
-                    analyzed_root = self.state.wrapper_analysis_roots.get(
-                        analysis_path
-                    )
-                    expected_root = str(
-                        (
-                            self.state.repo_root
-                            / "hw"
-                            / "vendor"
-                            / "mosaic"
-                            / core
-                        ).resolve()
-                    )
-                    if analyzed_root != expected_root:
-                        return SkillResult(
-                            ok=False,
-                            skill=name,
-                            summary="existing vendor apply requires analysis of that vendor tree",
-                            errors=[f"analyze {expected_root} before applying"],
-                        )
-            return None
-        flow = arguments.get("flow")
-        config = arguments.get("config", "")
-        if self._scope_required and self.state.scope is None:
-            return SkillResult(
-                ok=False,
-                skill=name,
-                summary="flow blocked until request_scope classifies the requested outcome",
-                errors=["call request_scope first"],
-            )
-        effect_error = self._scope_effect_precondition(name, arguments)
-        if effect_error is not None:
-            return effect_error
-        if flow == "mosaic-gen-config" and not self.state.has_current(
-            self.state.topology_ok, config
-        ):
-            return SkillResult(
-                ok=False,
-                skill=name,
-                summary="mosaic generation blocked until topology_check passes",
-                errors=[f"no successful topology_check evidence for {config!r}"],
-            )
-        if flow in {
-            "tb-soc-generic",
-            "tb-soc-wake",
-            "tb-soc-titan",
-            "tb-soc-fw",
-        } and not self.state.has_current(
-            self.state.generated_ok, config
-        ):
-            return SkillResult(
-                ok=False,
-                skill=name,
-                summary=f"{flow} blocked until mosaic-gen-config passes",
-                errors=[f"no successful generation evidence for {config!r}"],
-            )
-        return None
+        from .gates import gate_precondition
+
+        return gate_precondition(
+            self.state, self.registry, self._scope_required, name, arguments
+        )
 
     def _scope_effect_precondition(
         self, name: str, arguments: Mapping[str, Any]
     ) -> Optional[SkillResult]:
-        scope = self.state.scope
-        if scope is None:
-            return None
-        registry_specs = getattr(self.registry, "specs", None)
-        if registry_specs is not None and name not in registry_specs:
-            # Let the typed registry return its canonical unknown-tool
-            # observation; it never executes an unregistered operation.
-            return None
-        all_scopes = REQUEST_SCOPES
-        allowed = {
-            "soc_plan": all_scopes,
-            "config_validate": all_scopes,
-            "topology_check": all_scopes,
-            "flow_list": all_scopes,
-            "doc_config": all_scopes,
-            "doc_dashboard": all_scopes,
-            "drc_analyze": {"analysis", "drc", "physical"},
-            "drc_scan": {"analysis", "drc", "physical"},
-            "soc_generate": {"config", "rtl", "simulation", "integration", "physical"},
-            "config_generate": {"config", "rtl", "simulation", "integration", "physical"},
-            "topology_render": {"documentation"},
-            "wrapper_analyze": {"analysis", "integration", "physical"},
-            "wrapper_scaffold": {"integration", "physical"},
-            "tb_generate": {"testbench", "simulation", "integration", "physical"},
-            "tb_run": {"testbench", "simulation", "integration", "physical"},
-            "tb_wake_demo": {"testbench", "simulation", "integration", "physical"},
-        }.get(name)
-        if allowed is not None and scope not in allowed:
-            return SkillResult(
-                ok=False,
-                skill=name,
-                summary=f"{name} is not authorized by '{scope}' request scope",
-                errors=["the model cannot widen the user-derived authorization ceiling"],
-            )
-        if name == "wrapper_analyze" and scope == "analysis" and arguments.get("output"):
-            return SkillResult(
-                ok=False,
-                skill=name,
-                summary="analysis-only wrapper inspection cannot persist output",
-                errors=["omit output or request integration scope explicitly"],
-            )
-        if name == "flow_run":
-            flow = str(arguments.get("flow", ""))
-            if flow in AgentToolRegistry.PHYSICAL_FLOWS:
-                flow_scopes = {"physical"}
-            elif flow.startswith("tb-") or flow in {
-                "verilator-run",
-                "pytest",
-            }:
-                flow_scopes = {"testbench", "simulation", "integration", "physical"}
-            else:
-                flow_scopes = {"rtl", "simulation", "integration", "physical"}
-            if scope not in flow_scopes:
-                return SkillResult(
-                    ok=False,
-                    skill=name,
-                    summary=f"flow '{flow}' is not authorized by '{scope}' request scope",
-                    errors=["the model cannot widen the user-derived authorization ceiling"],
-                )
-        elif allowed is None:
-            return SkillResult(
-                ok=False,
-                skill=name,
-                summary=f"{name} has no request-scope policy",
-                errors=["fail-closed tool authorization"],
-            )
-        return None
+        from .gates import scope_effect_precondition
+
+        return scope_effect_precondition(
+            self.state, self.registry, self._scope_required, name, arguments
+        )
 
     @staticmethod
     def _failed(result: SkillResult) -> SkillResult:

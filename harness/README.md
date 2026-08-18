@@ -331,6 +331,123 @@ skill card's playbook).
 | **doc-gen** | Generate documentation | Config/artifacts → markdown docs |
 | **topo-viz** | Semantic config checks + topology diagram | Config → checks + interactive SVG/HTML |
 | **setup** | omp-style driver picker (deterministic/claude/omp/api) | choice → `~/.config/oh-my-soc/config.json` (keys never stored) |
+| **physical-intent** | Derive the floorplan/hardening config, and watch routing | Config → die size + LibreLane config; run dir → routability verdict |
+| **mcp-server** | Serve the gated registry to an MCP client over stdio | Request → locked scope ceiling + 20 gated tools |
+
+### mcp-server: the same gates, for an external agent
+
+`--driver claude` used to be a `subprocess.call` with a prompt: the scope
+ceiling, evidence binding and completion gate existed in `AgentRunner` and
+applied to nothing the external driver did.
+
+```
+oh-my-soc mcp-server --request "simulate a two-core SoC and run the wake demo"
+```
+
+Derives the ceiling from the request with the same `classify_request_scope` the
+built-in loop uses, **locks it before any client connects**, and holds one
+`AgentState` for the session so evidence recorded by one call gates the next.
+The gates live in `harness/gates.py` and are called by both paths, so a refusal
+over MCP is the *identical* string produced in-process — not a second
+implementation that agrees today.
+
+`oh-my-soc agent --driver claude` now wires this up automatically:
+`--mcp-config` + `--strict-mcp-config` + an `--allowedTools` list naming only
+the `mcp__oh-my-soc__*` tools, with `Bash`/`Write`/`Edit` disallowed. That last
+part is load-bearing — with Bash available the model can call
+`python3 -m harness ...` directly and the gate is decoration.
+
+**Design questions, from a second server.** If `naja-scope-mcp`
+(najaeda/naja-scope) is installed, the enforced session also gets it: what
+drives a net, hierarchy under an instance, combinational cones, and the source
+line an object came from — answered without pasting 507 files at the model.
+
+The boundary is deliberate and visible in the config. **Our server produces
+evidence** (scope-ceilinged, digest-bound, gated); **naja-scope produces
+facts**. An agent that knows the connectivity has not proven anything, and a
+naja-scope answer is never a gate result.
+
+Its `save_snapshot` tool is **excluded** — it writes to disk, and the enforced
+session may not write outside the gated tools. The allowlist is enumerated
+rather than wildcarded, so a tool added by a future release is not admitted
+silently; a test probes the running server and fails if the lists diverge.
+
+`--driver omp` **refuses to launch**: oh-my-pi speaks no MCP, so the gates
+cannot travel with it. `--unenforced` proceeds after saying plainly that no
+authorization ceiling applies.
+
+### physical-intent: sizing a die, and knowing when to stop
+
+```
+oh-my-soc physical-intent floorplan --config configs/mosaic_blockc_4hart.yaml
+oh-my-soc physical-intent harden    --config ... --design mosaic_block_c -o out.yaml
+oh-my-soc physical-intent watch     --run-dir flow/librelane/experimental/runs/<tag>
+```
+
+The config is **validated, not just parsed**. This used to be a bare
+`.get("soc")`, so a typo'd key or an illegal topology produced a die size
+anyway and the first sign of trouble was hours into a flow.
+
+Internally the physical lowering reads a typed `DesignIntent`
+(`harness/intent.py`) rather than raw YAML — roadmap M1's fourth exit
+criterion. `DesignIntent` does not re-validate; `from_config` delegates to
+`validate_soc_config`, so there is one notion of a legal config, not two.
+
+`--utilisation` now defaults to **the densest target that design size has been
+shown to route at** (81% at 2 harts, 79% at 3, 65% at 4) rather than a flat
+0.75. A flat default is what sized a 4-hart die that spent eleven hours failing
+to route. Pass the flag explicitly to override; the config records a
+`# routability` note either way.
+
+```
+oh-my-soc physical-intent metrics --run-dir runs/<tag> [--compare runs/<other>]
+```
+
+`metrics` reports a finished run's signoff numbers **typed** — units, corner
+and PDK on every value, area converted to mm² by the type rather than by hand,
+and a delta against a second run. Every experiment in this project previously
+ended with someone opening two `metrics.json` files and writing the comparison
+into prose; a confounded experiment survived a full run that way, because the
+die had moved and nothing printed the die.
+
+```
+oh-my-soc physical-intent metrics  --run-dir runs/<tag> --record
+oh-my-soc physical-intent evidence --run-dir runs/<tag>     # still current?
+oh-my-soc physical-intent evidence --pdk gf180mcuD          # what a PDK swap hits
+```
+
+`--record` stores the run in a **content-addressed evidence store** under
+`build/evidence/`, keyed on everything that decides what its numbers mean: the
+RTL bundle, the hardening config (minus machine-specific paths), the PDK, the
+standard-cell library, the tool image (librelane version **and** the flake
+lock's hash) and a digest of the modules that parsed it.
+
+Invalidation is not a mechanism — the key *is* the digest of the inputs, so
+`evidence --run-dir` answers "is this still current?" by asking whether a
+record exists under the key today's inputs produce. Touch a parser and the key
+moves:
+
+```console
+$ oh-my-soc physical-intent evidence --run-dir runs/blocka_reharden
+[OK] evidence is current
+$ printf '\n# touch\n' >> harness/evidence/metric.py
+$ oh-my-soc physical-intent evidence --run-dir runs/blocka_reharden
+[OK] no stored evidence for these inputs — something changed
+```
+
+Writing *different* content under an existing key raises rather than
+overwriting: the inputs claim to determine the output, so two answers means an
+input is not being captured, and that is a bug to find rather than hide.
+
+`watch` reads a run's detailed-routing trajectory and answers whether it is
+going to converge — exit **3** means plateaued. It is sticky: a run that
+plateaued early and drifted later still reports the plateau, because assessing
+only the tail called that eleven-hour failure "converging".
+
+Set `MOSAIC_WATCH_ROUTING=1` on `run_signoff.sh` to poll during the run and
+kill it on a plateau (~1.15 h instead of 10.66 h on the one real failure).
+Opt-in on purpose: it is a kill switch on multi-hour jobs, and only exit
+status 3 triggers it — a watcher that cannot tell never kills anything.
 
 ### Registry single-sourcing
 

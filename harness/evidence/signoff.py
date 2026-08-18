@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from harness.evidence.librelane import (
     ANTENNA_METRIC_KEYS,
@@ -46,11 +46,29 @@ from harness.evidence.librelane import (
     sum_metrics,
 )
 from harness.evidence.status import EvidenceStatus, worst
-from harness.skills.drc_triage import (
-    _parse_klayout_drc,
-    _parse_magic_drc,
-    _parse_netgen_lvs,
-)
+from harness.evidence.waivers import Waiver, apply_waivers
+
+
+# The report parsers live in the drc-triage skill, and importing them at module
+# scope is a cycle: harness.evidence.signoff -> harness.skills.drc_triage ->
+# harness.skills/__init__ -> flow_runner -> harness.evidence.signoff. It
+# resolved only when `harness.skills` happened to be imported first, so
+# `import harness.evidence.signoff` on its own raised ImportError while the test
+# suite never noticed (pytest always reaches skills first). Deferring the import
+# to call time keeps one source of truth for the parsers without the cycle.
+def _parse_magic_drc(text: str):
+    from harness.skills.drc_triage import _parse_magic_drc as impl
+    return impl(text)
+
+
+def _parse_klayout_drc(text: str):
+    from harness.skills.drc_triage import _parse_klayout_drc as impl
+    return impl(text)
+
+
+def _parse_netgen_lvs(text: str):
+    from harness.skills.drc_triage import _parse_netgen_lvs as impl
+    return impl(text)
 
 # Primary summary lines emitted by the flows we drive.
 _DRC_COUNT_PATTERNS = (
@@ -91,6 +109,10 @@ class SignoffEvidence:
     reasons: List[str] = field(default_factory=list)
     sources: Dict[str, str] = field(default_factory=dict)
     run_dir: Optional[str] = None
+    design_name: Optional[str] = None
+    # Findings accepted under a recorded, bounded, dated waiver. Always
+    # reported: a waived run is a PASS that says so, never a silent PASS.
+    waived: List[Dict[str, Any]] = field(default_factory=list)
 
     def as_metrics(self) -> Dict[str, Any]:
         """Flatten into the ``RunReport.metrics`` dict ``flow-runner`` uses."""
@@ -117,6 +139,10 @@ class SignoffEvidence:
             metrics["signoff_sources"] = self.sources
         if self.run_dir:
             metrics["run_dir"] = self.run_dir
+        if self.design_name:
+            metrics["design_name"] = self.design_name
+        if self.waived:
+            metrics["signoff_waived"] = self.waived
         return metrics
 
 
@@ -169,6 +195,7 @@ def parse_signoff(
     require_lvs: bool = True,
     require_timing: bool = False,
     require_antenna: bool = False,
+    waivers: Optional[Sequence[Waiver]] = None,
 ) -> SignoffEvidence:
     """Derive signoff evidence for one hardening run.
 
@@ -194,6 +221,7 @@ def parse_signoff(
                 require_lvs=require_lvs,
                 require_timing=require_timing,
                 require_antenna=require_antenna,
+                waivers=waivers,
             )
     return _from_text(
         output,
@@ -330,9 +358,12 @@ def _from_librelane_run(
     require_lvs: bool,
     require_timing: bool,
     require_antenna: bool,
+    waivers: Optional[Sequence[Waiver]] = None,
 ) -> SignoffEvidence:
     """Derive a verdict from a LibreLane run's metrics file and step reports."""
-    evidence = SignoffEvidence(run_dir=str(run.run_dir))
+    evidence = SignoffEvidence(
+        run_dir=str(run.run_dir), design_name=run.design_name
+    )
     if run.metrics_source:
         evidence.sources["metrics"] = run.metrics_source
     for name, path in run.reports.items():
@@ -452,14 +483,33 @@ def _from_librelane_run(
     # LibreLane's metric vocabulary drifts between versions. Any adverse
     # metric we did not explicitly account for is surfaced and fails the run,
     # so an upgrade cannot silently blind the gate.
-    for key, value in adverse_metrics(metrics):
-        if key in accounted:
-            continue
+    findings = [(key, value) for key, value in adverse_metrics(metrics)
+                if key not in accounted]
+
+    # Recorded waivers are applied LAST, to findings the sweep already made.
+    # A waiver can only ever reduce a FAIL it can name; it cannot stop a metric
+    # being measured, cannot suppress DRC/LVS/timing/antenna verdicts above,
+    # and cannot apply to a design other than the one this run built.
+    findings, evidence.waived, waiver_notes = apply_waivers(
+        findings, waivers or (), design=evidence.design_name
+    )
+    evidence.reasons.extend(waiver_notes)
+
+    for key, value in findings:
         evidence.other_violations.append(f"{key}={value:g}")
         statuses.append(EvidenceStatus.FAIL)
     if evidence.other_violations:
         evidence.reasons.append(
             "unaccounted adverse metrics: " + ", ".join(evidence.other_violations)
+        )
+    if evidence.waived:
+        evidence.reasons.append(
+            "accepted under recorded waiver: " + ", ".join(
+                f"{record['metric']}={record['observed']:g} "
+                f"(ceiling {record['accepted_max']:g}, "
+                f"review by {record['review_by']})"
+                for record in evidence.waived
+            )
         )
 
     if not statuses:

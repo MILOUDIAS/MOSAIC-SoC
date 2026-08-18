@@ -386,6 +386,84 @@ def _unknown_keys(path: str, value: Mapping[str, Any], allowed: FrozenSet[str]) 
     return [f"{path}.{key}: unknown key" for key in sorted(set(value) - set(allowed))]
 
 
+# ── schema versioning ────────────────────────────────────────────────
+#
+# `allowed_soc` below is a single evolving frozenset, so until now a config
+# could not state which schema it was written against. A config authored months
+# ago and one authored today are indistinguishable, and a config rots silently
+# as the set changes underneath it: keys are added, meanings tighten, and
+# nothing records which rules it was actually accepted under.
+#
+# `soc.schema` fixes that with one key. The discipline is OpenADA's, whose
+# operation profiles are immutable and versioned by filename -- changing a
+# required field, a value's meaning, or a closed shape requires a NEW
+# identifier, and the old one keeps working. Concretely, when v2 lands:
+#
+#   * `mosaic/v1` stays in this table pointing at a FROZEN copy of today's
+#     rules, so a v1 config keeps validating exactly as it does now;
+#   * `mosaic/v2` gets its own entry;
+#   * a config that says neither is refused by name.
+#
+# Omitting the key means `mosaic/v1`, so every config in the repo today is
+# already valid and nothing needs a migration.
+CURRENT_SCHEMA = "mosaic/v1"
+KNOWN_SCHEMAS: FrozenSet[str] = frozenset({CURRENT_SCHEMA})
+
+
+# ── objectives ───────────────────────────────────────────────────────
+#
+# The schema is otherwise purely STRUCTURAL: it says what is in the SoC and
+# nothing about what the SoC must achieve. That gap is why a hardening config
+# cannot be generated -- there is no field a clock period could be derived
+# from, so Block A's `CLOCK_PERIOD: 100` was a human decision recorded in a
+# comment.
+#
+# `objectives` is the smallest addition that closes it. Deliberately not a
+# performance model: `target_clock_mhz` is a REQUEST that the physical flow
+# either meets or does not, and STA remains the only thing that decides which.
+# Budgets are optional and, when present, are checked against measured results
+# rather than used to prune anything.
+# `die_um` is a MANDATE (an MPW slot the block must match exactly); the max_*
+# keys are BOUNDS the derived die must fit inside. Different meanings, so
+# different keys -- a slot delivery is not "at most this big", it is this big.
+OBJECTIVE_KEYS = frozenset(
+    {"target_clock_mhz", "die_um", "max_die_um", "max_area_mm2"}
+)
+
+
+def objectives_errors(soc: Mapping[str, Any]) -> List[str]:
+    """Validate the optional ``soc.objectives`` mapping."""
+    objectives = soc.get("objectives")
+    if objectives is None:
+        return []
+    if not isinstance(objectives, Mapping):
+        return ["soc.objectives must be a mapping"]
+    errors = _unknown_keys("soc.objectives", objectives, OBJECTIVE_KEYS)
+    for key in sorted(OBJECTIVE_KEYS & set(objectives)):
+        value = objectives[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            errors.append(f"soc.objectives.{key} must be a number")
+        elif value <= 0:
+            errors.append(f"soc.objectives.{key} must be greater than 0")
+    return errors
+
+
+def schema_errors(soc: Mapping[str, Any]) -> List[str]:
+    """Validate ``soc.schema``, refusing an unknown version by name."""
+    declared = soc.get("schema", CURRENT_SCHEMA)
+    if not isinstance(declared, str) or not declared.strip():
+        return ["soc.schema must be a string such as 'mosaic/v1'"]
+    declared = declared.strip()
+    if declared not in KNOWN_SCHEMAS:
+        return [
+            f"soc.schema {declared!r} is not a schema this generator "
+            f"implements (known: {sorted(KNOWN_SCHEMAS)}). This config was "
+            "written for a different version of the format; validating it "
+            "against the current rules would report misleading errors."
+        ]
+    return []
+
+
 def target_capability_errors(soc: Mapping[str, Any]) -> List[str]:
     """Return implementation-target errors for an otherwise public SoC map.
 
@@ -502,12 +580,19 @@ def validate_soc_config(cfg: Any, allow_sim_only: bool = True) -> List[str]:
 
     allowed_soc = frozenset(
         {
+            "schema", "objectives",
             "name", "pdk", "profile", "target", "cores", "memory", "bus", "bus_opts",
             "scheduler", "peripherals", "dma", "debug", "plic", "spi_mode",
             "multicore_timer", "gpio_ao", "ao_rv_timer", "ao_fast_intr",
         }
     )
     errors.extend(_unknown_keys("soc", soc, allowed_soc))
+
+    # Checked before anything else: a config that declares a schema we do not
+    # implement must be refused BY NAME, not diagnosed as twenty unknown keys
+    # from a validator that was never meant to read it.
+    errors.extend(schema_errors(soc))
+    errors.extend(objectives_errors(soc))
 
     name = soc.get("name", "mosaic_soc")
     if not isinstance(name, str) or not SOC_NAME_RE.fullmatch(name):

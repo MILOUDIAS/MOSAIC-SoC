@@ -264,8 +264,56 @@ BLOCK_A_PROMPT = (
     "one serv atlas rv32i without CSRs boot 0x40010000, "
     "no sram, 128 byte scratchpad, 1 kb boot rom, no DMA, no debug, no PLIC, "
     "no multicore timer, no gpio, no rv timer, no fast interrupts, "
-    "XIP from flash, uart only, TDU dynamic"
+    "XIP from flash, uart only, TDU dynamic, at 25 MHz"
 )
+
+# The same prompt without the clock, for the clock-grammar tests below.
+BLOCK_A_PROMPT_NO_CLOCK = BLOCK_A_PROMPT.replace(", at 25 MHz", "")
+
+
+@pytest.mark.parametrize("phrasing", [
+    "at 25 MHz", "25MHz", "with a 25 MHz clock",
+    "clocked at 25 MHz", "clock at 25 mhz",
+])
+def test_the_grammar_can_state_a_target_clock(tmp_path, phrasing):
+    """The frequency is design intent, so the prompt has to be able to say it.
+
+    Before this the grammar could describe the whole SoC but not the speed it
+    was meant to run at, so a clock could only be set by hand-editing a
+    LibreLane hardening config.
+    """
+    import yaml
+
+    result = SocFromPrompt(repo_root=tmp_path).run(
+        BLOCK_A_PROMPT_NO_CLOCK + ", " + phrasing, name="probe")
+    assert result.ok, result.errors
+    soc = yaml.safe_load(open(result.details["config"]["path"]))["soc"]
+    assert soc["objectives"]["target_clock_mhz"] == 25.0
+
+
+def test_a_megahertz_clock_does_not_also_request_a_timer(tmp_path):
+    """"clock" means the TIMER PERIPHERAL in this grammar -- except next to MHz.
+
+    "with a 25 MHz clock" used to set the frequency AND add a timer, and on a
+    tapeout config that is rejected outright: "soc.target 'tapeout' requires
+    peripherals uart". The frequency rule now swallows an adjacent "clock" into
+    its consumed span so the peripheral scan never sees it.
+    """
+    import yaml
+
+    result = SocFromPrompt(repo_root=tmp_path).run(
+        BLOCK_A_PROMPT_NO_CLOCK + ", with a 25 MHz clock", name="probe")
+    assert result.ok, result.errors
+    soc = yaml.safe_load(open(result.details["config"]["path"]))["soc"]
+    assert soc["peripherals"] == ["uart"], "a MHz figure must not add a timer"
+    assert soc["objectives"]["target_clock_mhz"] == 25.0
+    # And the bare word still does mean a timer, on a config that allows one.
+    plain = SocFromPrompt(repo_root=tmp_path).run(
+        "an SoC with one serv titan and a clock", name="probe2")
+    assert plain.ok, plain.errors
+    plain_soc = yaml.safe_load(open(plain.details["config"]["path"]))["soc"]
+    assert "timer" in plain_soc["peripherals"]
+
 
 
 def test_prompt_reproduces_the_frozen_tapeout_config(tmp_path):

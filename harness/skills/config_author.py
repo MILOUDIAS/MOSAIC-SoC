@@ -12,6 +12,8 @@ import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from util.xheep_gen.core_registry import CURRENT_SCHEMA
+
 from ..core import (
     SkillResult, REPO_ROOT, validate_config, dump_yaml,
     VALID_CORE_IPS, VALID_ROLES, VALID_ISAS, VALID_BUS,
@@ -22,6 +24,7 @@ from ..core import (
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "soc": {
+        "schema": CURRENT_SCHEMA,
         "name": "mosaic_soc",
         "pdk": "gf180mcu",
         "target": "rtl",
@@ -86,7 +89,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             ],
             "memory": {"sram_kb": 32, "boot_rom_kb": 2},
             "dma": "idma",
-        "bus": "obi",
+            "bus": "obi",
             "scheduler": {"tdu": True, "mode": "dynamic"},
             "peripherals": ["uart", "gpio", "timer", "spi"],
         }
@@ -130,7 +133,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             ],
             "memory": {"sram_kb": 8, "boot_rom_kb": 1},
             "dma": "idma",
-        "bus": "obi",
+            "bus": "obi",
             "scheduler": {"tdu": True, "mode": "static"},
             "peripherals": ["uart"],
         }
@@ -149,7 +152,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             ],
             "memory": {"sram_kb": 64, "boot_rom_kb": 2},
             "dma": "idma",
-        "bus": "obi",
+            "bus": "obi",
             "scheduler": {"tdu": True, "mode": "power-aware"},
             "peripherals": ["uart", "gpio", "timer", "spi"],
         }
@@ -170,7 +173,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             ],
             "memory": {"sram_kb": 32, "boot_rom_kb": 2},
             "dma": "idma",
-        "bus": "obi",
+            "bus": "obi",
             "scheduler": {"tdu": True, "mode": "dynamic"},
             "peripherals": ["uart", "gpio", "timer", "spi"],
         }
@@ -190,7 +193,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             ],
             "memory": {"sram_kb": 32, "boot_rom_kb": 2},
             "dma": "idma",
-        "bus": "obi",
+            "bus": "obi",
             "scheduler": {"tdu": True, "mode": "dynamic"},
             "peripherals": ["uart", "gpio", "timer", "spi"],
         }
@@ -239,6 +242,7 @@ class ConfigAuthor:
         output_path: Optional[Path] = None,
         scratchpad_bytes: Optional[int] = None,
         platform: Optional[Dict[str, Any]] = None,
+        target_clock_mhz: Optional[float] = None,
     ) -> SkillResult:
         """Generate a mosaic.yaml from parameters.
 
@@ -282,6 +286,10 @@ class ConfigAuthor:
 
             cfg = {
                 "soc": {
+                    # Stated, not implied: a generated config records which
+                    # schema it was authored against, so it cannot rot silently
+                    # as the validator evolves.
+                    "schema": CURRENT_SCHEMA,
                     "name": name,
                     "pdk": pdk,
                     "target": target,
@@ -298,6 +306,18 @@ class ConfigAuthor:
             # where the shared-control window and any stack live.
             if scratchpad_bytes is not None:
                 cfg["soc"]["memory"]["scratchpad_bytes"] = scratchpad_bytes
+
+            # The clock is DESIGN INTENT and belongs in the SoC config, not in a
+            # hardening config: `physical-intent harden` derives CLOCK_PERIOD
+            # from it. Without this flag a frequency could only be set by
+            # hand-editing a LibreLane config, which is how a stray
+            # config_blocka_25mhz.yaml came to exist. Emitted only when asked,
+            # so a config that does not state a clock still fails the
+            # derivation loudly ("a clock nobody chose is the kind of number
+            # that ends up in a datasheet") rather than defaulting to one.
+            if target_clock_mhz is not None:
+                cfg["soc"].setdefault("objectives", {})
+                cfg["soc"]["objectives"]["target_clock_mhz"] = target_clock_mhz
 
             # Selectable platform blocks (soc.debug/plic/spi_mode/...). Only
             # emitted when asked for, so configs that do not care keep the

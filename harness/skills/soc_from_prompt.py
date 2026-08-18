@@ -91,6 +91,7 @@ class ParsedIntent:
     peripherals: List[str] = field(default_factory=list)
     peripherals_explicit: bool = False
     scratchpad_bytes: Optional[int] = None
+    target_clock_mhz: Optional[float] = None
     target: Optional[str] = None
     # True only when the prompt SAID "no sram". A bare "0 KB sram" is more
     # likely a slip than a design decision, and is still refused.
@@ -251,6 +252,27 @@ def parse_prompt(text: str) -> ParsedIntent:
     if m:
         intent.scratchpad_bytes = int(m.group(1))
         consume(m, f"scratchpad {intent.scratchpad_bytes} B")
+
+    # ── target clock ──
+    # DESIGN INTENT, not a result. Without this the grammar could describe the
+    # whole SoC but not the frequency it is meant to run at, so a clock could
+    # only be set by hand-editing a hardening config. Matched before any other
+    # numeric rule would see it; "mhz" is unambiguous.
+    #
+    # "clock" on its own means the TIMER PERIPHERAL in this grammar (see the
+    # alias table), so this keys on the UNIT rather than the word -- and then
+    # swallows an adjacent "clock" into the consumed span. Otherwise "with a
+    # 25 MHz clock" sets the frequency AND adds a timer, which on a tapeout
+    # config is rejected outright for not being uart-only. Measured before the
+    # fix: that exact prompt failed with "requires peripherals uart".
+    #
+    # The masking pass below is what makes swallowing work -- it blanks claimed
+    # spans before the peripheral scan, for exactly this class of collision.
+    m = re.search(
+        r"(?:\bclock(?:ed)?\s+(?:at\s+)?)?(\d+(?:\.\d+)?)\s*mhz(?:\s+clock)?", low)
+    if m:
+        intent.target_clock_mhz = float(m.group(1))
+        consume(m, f"target clock {intent.target_clock_mhz:g} MHz")
 
     # ── selectable platform blocks ──
     # Each is (regex, key, value). These are what make the Chipathon Block A
@@ -626,6 +648,7 @@ class SocFromPrompt:
                 ),
                 scratchpad_bytes=intent.scratchpad_bytes,
                 platform=intent.platform or None,
+                target_clock_mhz=intent.target_clock_mhz,
                 target=intent.target or "rtl",
             )
         stages: Dict[str, Any] = {"plan": planned.details,

@@ -207,3 +207,39 @@ def test_core_descriptors_select_instead_of_aggregating_catalog():
     assert '"!mosaic_configured? (files_rtl_native_legacy)"' in top
     assert "mosaic_ibex? (ibex)" in sci
     assert '"!mosaic_configured? (files_rtl)"' in sci
+
+
+def test_the_hardening_template_is_not_part_of_the_rtl_closure():
+    """Editing a LibreLane setting must not invalidate the RTL bundle.
+
+    `flow` is a closure root because `flow/librelane/**/*.sv` holds the
+    delivery wrappers, which are synthesised. The signoff template is not RTL:
+    it sets PnR corners, repair margins and PDN geometry, and its only readers
+    are harness/physical/hardening.py and harness/skills/flow_runner.py.
+
+    Counting it meant that changing one repair margin -- which is exactly what
+    a flow experiment does -- moved the bundle hash and made the next run abort
+    with "no MOSAIC manifest", demanding a multi-hour regen that reproduces
+    byte-identical RTL. Measured: blocka_reharden and blocka_slewonly have
+    different bundle hashes and identical generated/ trees. The hazard is not
+    the wasted hours, it is the pressure to reuse a stale bundle instead.
+    """
+    ignored = build_manifest._ignored_source_path
+    assert ignored(Path("flow/librelane/signoff_template.yaml"))
+    assert ignored(Path("flow/librelane/signoff_waivers.yaml"))
+    # Variant templates are the point: a one-variable experiment writes one.
+    assert ignored(Path("flow/librelane/signoff_template_slew20.yaml"))
+
+
+def test_the_delivery_wrappers_stay_in_the_rtl_closure():
+    """The other half of the rule, and the one that matters if it breaks.
+
+    Excluding too much is silent: a stale bundle gets hardened and nothing
+    says so. These are synthesised, so they must always count.
+    """
+    ignored = build_manifest._ignored_source_path
+    assert not ignored(Path("flow/librelane/experimental/mosaic_block_a.sv"))
+    assert not ignored(Path("flow/librelane/src/mosaic_soc_core.sv"))
+    # A yaml named like the template but elsewhere is NOT exempt -- the rule is
+    # anchored to the one directory, not to the filename.
+    assert not ignored(Path("flow/other/signoff_template.yaml"))
