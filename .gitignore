@@ -121,6 +121,21 @@ flow/OpenROAD-flow-scripts
 
 flow/librelane/experimental/runs/*
 
+# LibreLane final run outputs: the lightweight signoff evidence (metrics, .lef,
+# .sdc, .vh, .lib, render) and the signoff GDS are tracked; the heavy
+# regenerable views are not (~3.4 GB, and .mag exceeds GitHub's 100 MB limit).
+flow/librelane/experimental/final_*/def/
+flow/librelane/experimental/final_*/json_h/
+flow/librelane/experimental/final_*/klayout_gds/
+flow/librelane/experimental/final_*/mag/
+flow/librelane/experimental/final_*/mag_gds/
+flow/librelane/experimental/final_*/nl/
+flow/librelane/experimental/final_*/odb/
+flow/librelane/experimental/final_*/pnl/
+flow/librelane/experimental/final_*/sdf/
+flow/librelane/experimental/final_*/spef/
+flow/librelane/experimental/final_*/spice/
+
 # Automatically generated docs
 /docs/source/Configuration/xheep_gen
 
