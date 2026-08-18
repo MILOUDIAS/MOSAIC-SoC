@@ -11,18 +11,54 @@
 # Runtime is hours. Expect DRC and LVS to find things on the first attempt --
 # that is the purpose.
 #
-# Usage:  ./run_signoff.sh [run-tag]
+# Usage:  ./run_signoff.sh [run-tag] [config]
+#         MOSAIC_CFG=configs/<design>.yaml ./run_signoff.sh <tag> <config>
+#
+# The config defaults to Block A. MOSAIC_CFG selects which generated RTL bundle
+# is hardened and already had to be set separately, so the two must agree: the
+# hardening config names the top module, MOSAIC_CFG decides what is inside it.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLOW="$(cd "$HERE/.." && pwd)"
 TAG="${1:-blocka_signoff}"
+CONFIG="${2:-${SIGNOFF_CONFIG:-experimental/config_blocka_signoff.yaml}}"
+
+# MOSAIC_HARDEN_FROM_SOC=<mosaic.yaml> derives the hardening config instead of
+# reading a hand-written one, closing the loop: SoC config -> floorplan -> flow.
+# The derived file is written into experimental/ (so `dir::` still resolves) and
+# named after the design, and it is a build product -- the closure ignore rules
+# cover .resolved_*/.filelist_*, and this one is regenerated every run.
+if [ -n "${MOSAIC_HARDEN_FROM_SOC:-}" ]; then
+  DERIVED_DESIGN="$(sed -nE 's/^DESIGN_NAME:[[:space:]]*([A-Za-z_][A-Za-z0-9_]*).*/\1/p' \
+      "$FLOW/$CONFIG" 2>/dev/null | head -1)"
+  DERIVED_DESIGN="${MOSAIC_HARDEN_DESIGN:-$DERIVED_DESIGN}"
+  if [ -z "$DERIVED_DESIGN" ]; then
+    echo "ERROR: set MOSAIC_HARDEN_DESIGN to the top module name" >&2
+    exit 2
+  fi
+  CONFIG="experimental/.generated_${DERIVED_DESIGN}.yaml"
+  echo "### deriving $CONFIG from $MOSAIC_HARDEN_FROM_SOC"
+  # `python3 -m harness` only resolves from the repo root: harness.core imports
+  # util.xheep_gen, which is deliberately not a package, so cwd is what puts it
+  # on sys.path. This script has already cd'd to $FLOW.
+  ( cd "$(cd "$FLOW/../.." && pwd)" && python3 -m harness physical-intent harden \
+      --config "$MOSAIC_HARDEN_FROM_SOC" --design "$DERIVED_DESIGN" \
+      --output "$FLOW/$CONFIG" \
+      ${MOSAIC_HARDEN_UTIL:+--utilisation "$MOSAIC_HARDEN_UTIL"} ) \
+      || { echo "ERROR: could not derive a hardening config" >&2; exit 2; }
+fi
 LOG="/tmp/ll_${TAG}.log"
 
 cd "$FLOW"
 
 if [ ! -d "$FLOW/gf180mcu" ]; then
   echo "ERROR: PDK missing. Run 'make clone-pdk' in $FLOW first." >&2
+  exit 2
+fi
+
+if [ ! -f "$FLOW/$CONFIG" ]; then
+  echo "ERROR: no such hardening config: $CONFIG" >&2
   exit 2
 fi
 
@@ -33,8 +69,8 @@ fi
 # (used to fall back to per-cell liberty limits). That would have blocked a
 # correct signoff config for looking superficially like a skip.
 if grep -qE '^\s*(substituting_steps\b|[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*\s*: *null)' \
-     experimental/config_blocka_signoff.yaml; then
-  echo "ERROR: config_blocka_signoff.yaml substitutes or nulls a flow step." >&2
+     "$FLOW/$CONFIG"; then
+  echo "ERROR: $CONFIG substitutes or nulls a flow step." >&2
   echo "       A signoff run must not skip steps. Aborting." >&2
   exit 3
 fi
@@ -56,40 +92,177 @@ if [ -z "$MANIFEST" ]; then
 fi
 if [ -z "$MANIFEST" ] || [ ! -f "$MANIFEST" ]; then
   echo "ERROR: no MOSAIC manifest. Generate the RTL first:" >&2
-  echo "  make mosaic-gen MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml" >&2
+  echo "  make mosaic-gen MOSAIC_CFG=${MOSAIC_CFG:-configs/mosaic_tapeout_ultra.yaml}" >&2
   exit 2
 fi
 BUILD_ROOT="$(ls -dt "$(dirname "$MANIFEST")"/runs/fusesoc.*/build 2>/dev/null | head -1)"
 if [ -z "$BUILD_ROOT" ] || [ ! -d "$BUILD_ROOT" ]; then
   echo "ERROR: no FuseSoC build root under $(dirname "$MANIFEST")/runs/" >&2
-  echo "  make mosaic-gen MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml" >&2
+  echo "  make mosaic-gen MOSAIC_CFG=${MOSAIC_CFG:-configs/mosaic_tapeout_ultra.yaml}" >&2
   exit 2
 fi
 
 RESOLVED="$HERE/.resolved_${TAG}.yaml"
 FRAGMENT="$HERE/.filelist_${TAG}.yaml"
+# The delivery wrapper is named after the design: DESIGN_NAME must equal the
+# top module name, so mosaic_block_b lives in experimental/mosaic_block_b.sv.
+# Deriving it here keeps the config the single place the design is named.
+DESIGN="$(sed -nE 's/^DESIGN_NAME:[[:space:]]*([A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$FLOW/$CONFIG" | head -1)"
+if [ -z "$DESIGN" ]; then
+  echo "ERROR: $CONFIG declares no DESIGN_NAME" >&2
+  exit 2
+fi
+WRAPPER="flow/librelane/experimental/${DESIGN}.sv"
+if [ ! -f "$REPO/$WRAPPER" ]; then
+  echo "ERROR: no delivery wrapper for design '$DESIGN' at $WRAPPER" >&2
+  echo "       DESIGN_NAME must equal the top module name, and the wrapper" >&2
+  echo "       file is named after it." >&2
+  exit 2
+fi
+
 python3 "$FLOW/scripts/gen_filelist.py" "$REPO" \
     --manifest "$MANIFEST" --build-root "$BUILD_ROOT" --output "$FRAGMENT" \
+    --wrapper "$WRAPPER" \
     || { echo "ERROR: could not resolve the source list" >&2; exit 2; }
 # LibreLane takes one config file, so the template and the resolved lists are
 # concatenated into a run-local copy. It lives beside the template so any
 # `dir::` references keep resolving.
-cat experimental/config_blocka_signoff.yaml "$FRAGMENT" > "$RESOLVED"
+cat "$FLOW/$CONFIG" "$FRAGMENT" > "$RESOLVED"
 echo "### sources : $(grep -c '^- /' "$FRAGMENT") files + include dirs, resolved from $(basename "$(dirname "$MANIFEST")")"
 
-echo "### Block A SIGNOFF — no steps skipped"
-echo "### config : experimental/config_blocka_signoff.yaml"
+# ── machine resource limits, opt-in ───────────────────────────────────────
+# Thread counts belong to the MACHINE, not the design, so they have no place
+# in signoff_template.yaml (shared by every design) or in the derived
+# per-design section. They cannot be left unset either: KLayout DRC on
+# mosaic_block_c was SIGKILLed twice by the OOM killer at the deck's default
+# thread count (Etc.nprocessors, 8 here) on a machine with 11 GB whose /tmp is
+# a tmpfs competing for the same RAM.
+#
+# The first time, the fix was appending a key by hand to .resolved_<tag>.yaml.
+# That works and is unreproducible: .resolved_* is a regenerated build product,
+# so the run that produced the evidence could not be repeated from the repo.
+#
+# ONLY keys ending in _THREADS are accepted, and that restriction is the point.
+# A thread count changes how long a check takes, never whether it passes, so
+# this cannot become the --skip the rest of this script refuses to have.
+if [ -n "${MOSAIC_RESOURCE_CONFIG:-}" ]; then
+  RES="$MOSAIC_RESOURCE_CONFIG"
+  [ -f "$RES" ] || RES="$FLOW/$MOSAIC_RESOURCE_CONFIG"
+  if [ ! -f "$RES" ]; then
+    echo "ERROR: no such resource config: $MOSAIC_RESOURCE_CONFIG" >&2
+    exit 2
+  fi
+  # Reject the whole file on the first key that is not a thread count, rather
+  # than filtering: silently dropping a line the caller meant to take effect is
+  # how a run ends up not being the run someone thinks they configured.
+  if BAD="$(grep -vE '^\s*(#.*)?$' "$RES" | grep -vE '^[A-Z][A-Z0-9_]*_THREADS: *[0-9]+ *(#.*)?$' | head -3)" \
+     && [ -n "$BAD" ]; then
+    echo "ERROR: $RES may only set *_THREADS keys. Rejected:" >&2
+    printf '  %s\n' "$BAD" >&2
+    exit 3
+  fi
+  cat "$RES" >> "$RESOLVED"
+  echo "### limits : $(grep -cE '^[A-Z]' "$RES") resource keys from $(basename "$RES")"
+fi
+
+echo "### SIGNOFF — no steps skipped"
+echo "### design : $DESIGN  (wrapper $WRAPPER)"
+echo "### config : $CONFIG"
+echo "### rtl    : ${MOSAIC_CFG:-configs/mosaic_tapeout_ultra.yaml}"
 echo "### tag    : $TAG"
 echo "### log    : $LOG"
 echo
 
-nix develop --command librelane "$RESOLVED" \
-    --pdk gf180mcuD --pdk-root "$FLOW/gf180mcu" --manual-pdk \
-    --run-tag "$TAG" \
-    --save-views-to "$HERE/final_${TAG}" \
-    2>&1 | tee "$LOG"
+# ── the routing guard, opt-in ─────────────────────────────────────────
+# MOSAIC_WATCH_ROUTING=1 polls the detailed-routing trajectory and kills the
+# run once it has plateaued. Block C at a 75% target spent ELEVEN HOURS not
+# converging; the guard would have called it at 1.15 h.
+#
+# Opt-in, and it stays that way until it has watched runs it did not also
+# provide the training data for. It is a kill switch on multi-hour jobs, and
+# the cost of a false positive is a wasted afternoon.
+#
+# It kills the librelane process group, not the shell's, so `set -e` and the
+# evidence section below still run.
+if [ "${MOSAIC_WATCH_ROUTING:-0}" != "1" ]; then
+  # The proven path, unchanged. The guard must not alter how a run behaves
+  # when it is switched off.
+  nix develop --command librelane "$RESOLVED" \
+      --pdk gf180mcuD --pdk-root "$FLOW/gf180mcu" --manual-pdk \
+      --run-tag "$TAG" \
+      --save-views-to "$HERE/final_${TAG}" \
+      2>&1 | tee "$LOG"
+else
+  echo "### routing guard: on (polling every ${MOSAIC_WATCH_POLL:-300}s)"
+  # `setsid` makes librelane a process-group leader so the whole tree can be
+  # signalled with `kill -- -PID`. Backgrounding a PIPELINE would not do:
+  # bash sets $! to the LAST command in it, so `... | tee log &` yields tee's
+  # pid and the kill would hit the logger while OpenROAD carried on.
+  setsid nix develop --command librelane "$RESOLVED" \
+      --pdk gf180mcuD --pdk-root "$FLOW/gf180mcu" --manual-pdk \
+      --run-tag "$TAG" \
+      --save-views-to "$HERE/final_${TAG}" \
+      > "$LOG" 2>&1 &
+  LIBRELANE_PID=$!
+  tail -f "$LOG" & TAIL_PID=$!
+
+  (
+    # `set -e` is inherited into this subshell, and exit status 3 is precisely
+    # what the watcher is looking for -- under -e the poll would kill the
+    # watcher instead of reporting. Turn it off deliberately.
+    set +e
+    while kill -0 "$LIBRELANE_PID" 2>/dev/null; do
+      sleep "${MOSAIC_WATCH_POLL:-300}"
+      ( cd "$REPO" && python3 -m harness physical-intent watch \
+          --run-dir "$HERE/runs/$TAG" --fail-on-plateau ) >/dev/null 2>&1
+      rc=$?
+      # ONLY 3 means "plateaued". Anything else is the watcher itself failing
+      # -- routing not started, no log yet, a bad import -- and a guard that
+      # kills multi-hour runs when it cannot tell is worse than no guard.
+      if [ "$rc" -eq 3 ]; then
+        {
+          echo "### ROUTING GUARD: plateau detected — killing the run"
+          ( cd "$REPO" && python3 -m harness physical-intent watch \
+              --run-dir "$HERE/runs/$TAG" 2>&1 )
+        } >> "$LOG"
+        touch "$HERE/runs/$TAG/.plateau_abort"
+        kill -TERM -- "-$LIBRELANE_PID" 2>/dev/null
+        exit 0
+      fi
+    done
+  ) &
+  WATCHER_PID=$!
+
+  set +e
+  wait "$LIBRELANE_PID"
+  set -e
+  kill "$WATCHER_PID" 2>/dev/null || true
+  kill "$TAIL_PID" 2>/dev/null || true
+fi
 
 RUN="$HERE/runs/$TAG"
+
+if [ -f "$RUN/.plateau_abort" ]; then
+  echo
+  echo "### ABORTED BY THE ROUTING GUARD"
+  echo "### This run was killed because detailed routing plateaued, NOT"
+  echo "### because any check failed. There is no signoff evidence below."
+  HARTS="$(cd "$REPO" && python3 -c "
+import yaml
+soc = (yaml.safe_load(open('${MOSAIC_CFG:-configs/mosaic_tapeout_ultra.yaml}')) or {}).get('soc') or {}
+print(sum(int(g.get('count', 1)) for g in (soc.get('cores') or [])))
+" 2>/dev/null)"
+  UTIL="$(sed -nE 's/^# utilisation ([0-9.]+)%.*/\1/p' "$FLOW/$CONFIG" | head -1)"
+  if [ -n "$HARTS" ] && [ -n "$UTIL" ]; then
+    ( cd "$REPO" && python3 -c "
+from harness.physical.retry import next_utilisation
+d = next_utilisation($HARTS, $UTIL / 100.0, 1)
+print('### retry at MOSAIC_HARDEN_UTIL=%.2f -- %s' % (d.utilisation, d.reason)
+      if d.retry else '### do not retry: ' + d.reason)
+" )
+  fi
+  exit 4
+fi
 echo
 echo "### SIGNOFF EVIDENCE"
 # Report names as LibreLane 3.0 actually writes them. An earlier version of

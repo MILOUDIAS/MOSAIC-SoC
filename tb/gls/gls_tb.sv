@@ -56,8 +56,20 @@ module gls_tb;
   string  sdf_file;
   int     maxcycles;
   longint cycles;
+  // Activity capture for workload power. See the +vcd block below.
+  string  vcd_file;
+  int     vcd_start;
+  int     vcd_cycles;
+  bit     vcd_enabled = 1'b0;
+  bit     vcd_running = 1'b0;
 
-  mosaic_block_a dut (
+  // Module name comes from the build, not the source: all three delivery
+  // wrappers expose an identical 11-port list, so one testbench covers every
+  // block. Defaults to Block A so a bare `iverilog` on this file still works.
+`ifndef GLS_DUT
+  `define GLS_DUT mosaic_block_a
+`endif
+  `GLS_DUT dut (
       .clk_i               (clk),
       .rst_ni              (rst_n),
       .boot_select_i       (boot_select),
@@ -87,6 +99,27 @@ module gls_tb;
   // Count cycles for the watchdog and for reporting how long boot took.
   always @(posedge clk) cycles <= cycles + 1;
 
+  // Open and close the region of interest. Reported when it closes so the
+  // window that produced a VCD is in the log next to the run that produced it
+  // -- a power number whose ROI nobody recorded is not evidence (M2).
+  always @(posedge clk) begin
+    if (vcd_enabled && !vcd_running && cycles >= vcd_start) begin
+      $display("[GLS] activity ROI open at cycle %0d", cycles);
+      $dumpfile(vcd_file);
+      // Depth 0 = the whole DUT hierarchy. report_power annotates leaf-cell
+      // pins, so a shallow dump reads as "no activity found" rather than
+      // erroring. A full-depth dump of this netlist annotated 119 792 pins.
+      $dumpvars(0, dut);
+      vcd_running <= 1'b1;
+    end else if (vcd_running && cycles >= vcd_start + vcd_cycles) begin
+      $dumpoff;
+      vcd_running <= 1'b0;
+      vcd_enabled <= 1'b0;
+      $display("[GLS] activity ROI closed at cycle %0d (roi_cycles=%0d)",
+               cycles, vcd_cycles);
+    end
+  end
+
   initial begin
     cycles = 0;
 
@@ -104,6 +137,32 @@ module gls_tb;
       $sdf_annotate(sdf_file, dut);
     end else begin
       $display("[GLS] zero-delay run (no SDF)");
+    end
+
+    // ---- switching-activity capture, for workload power -------------------
+    // +vcd=<path> turns it on. OpenSTA's report_power annotates activity onto
+    // NETS OF THE NETLIST, which is why this lives in the gate-level bench and
+    // not the RTL one: an RTL trace carries names that mostly do not survive
+    // synthesis, so the activity would fail to attach to almost everything
+    // while still producing a plausible-looking number.
+    //
+    // The window is BOUNDED and that is not an optimisation. This netlist is
+    // ~200k cells; dumping every net for the full ~12 400-cycle boot produces
+    // a VCD in the tens of gigabytes, on a volume that has been at 96-99% all
+    // week. +vcd_start/+vcd_cycles select a region of interest instead, and
+    // harness/evidence/workload.py refuses to call a power number
+    // workload-derived if that region does not cover the run.
+    if ($value$plusargs("vcd=%s", vcd_file)) begin
+      if (!$value$plusargs("vcd_start=%d", vcd_start)) vcd_start = 0;
+      if (!$value$plusargs("vcd_cycles=%d", vcd_cycles)) vcd_cycles = 1000;
+      $display("[GLS] activity capture: %s, cycles %0d..%0d",
+               vcd_file, vcd_start, vcd_start + vcd_cycles);
+      // NOTE: $dumpfile/$dumpvars are deliberately NOT called here. They fire
+      // when the ROI opens, below. Arming with $dumpvars + $dumpoff would emit
+      // a `$dumpon` marker, and OpenSTA's VCD reader rejects it outright:
+      //   [ERROR STA-0800] ... unknown vcd command
+      // Deferring instead means the file only ever contains the ROI.
+      vcd_enabled = 1'b1;
     end
 
     // Load the flash exactly as tb_util.svh does for the RTL flow: clear, then

@@ -47,10 +47,24 @@ with them the very paths SDF would annotate. `run_gls.sh --sdf` therefore
 **CVC** (OSS CVC 7.00b, IEEE 1364-2005) does compile specify blocks, has SDF
 annotation and `+min/typ/maxdelays`, and offers `+random_2state=<seed>` — a
 better power-up model than Icarus allows. `run_gls_cvc.sh` is complete and
-correct as far as it goes, but CVC **segfaults** compiling the 45 022-instance
-netlist against the full specify library (peak RSS 210 MB of 7.3 GB available,
-so a bug at scale, not memory). The same patched library compiles and simulates
-a small design in 0.1 s.
+correct as far as it goes, but CVC **segfaults** compiling this design (peak RSS
+210 MB of 7.3 GB available, so a bug at scale, not memory). The same patched
+library compiles and simulates a small design in 0.1 s.
+
+**Re-tested 2026-08-13 on `blocka_slew32`, and the earlier diagnosis was too
+narrow.** This section used to blame the full specify library. It is not that:
+
+| variant | result |
+|---|---|
+| baseline (`+define+USE_POWER_PINS`, `+maxdelays`, `+sdfverbose`) | segfault |
+| without `+sdfverbose` | segfault |
+| plain `nl` netlist, no power pins, testbench patched | segfault |
+| **`+nospecify +notimingchecks`** | **segfault** |
+
+It crashes with no specify data at all, so the trigger is design size outright,
+not timing annotation. That rules out every workaround available here and
+leaves the conclusion below unchanged — but pointed at the right cause, so
+nobody re-runs this bisect.
 
 Timing coverage is therefore STA's, at nine corners. Closing this gap needs a
 commercial simulator or a newer CVC.

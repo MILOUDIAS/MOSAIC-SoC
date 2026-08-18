@@ -78,12 +78,19 @@ EXCLUDED_PATH_PARTS = (
     "/tech_cells_generic/src/rtl/tc_clk.sv",
 )
 
-# Sources outside the FuseSoC graph that the macro needs.
+# Sources outside the FuseSoC graph that the macro needs, whatever the design.
 EXTRA_SOURCES = (
-    "flow/librelane/experimental/mosaic_block_a.sv",  # the 22-pin delivery wrapper
     "hw/asic/gf180/tc_clk.sv",                        # GF180 ICG (bug 24)
     "tb/mosaic_soc/cve2_clock_gate.sv",               # clock-gate shim
 )
+
+# The delivery wrapper is per-DESIGN, because LibreLane's DESIGN_NAME must equal
+# the top module name and signoff waivers are scoped by design name -- two
+# designs cannot share one module. This was hardcoded to Block A's wrapper,
+# which meant hardening any other design failed late, at Verilator lint, with
+# "Specified --top-module was not found in design" rather than at the point the
+# wrong file list was built.
+DEFAULT_WRAPPER = "flow/librelane/experimental/mosaic_block_a.sv"
 
 
 def find_vc(build_root: pathlib.Path) -> pathlib.Path:
@@ -104,7 +111,7 @@ def excluded(path: str) -> bool:
 
 
 def collect(repo: pathlib.Path, manifest_path: pathlib.Path,
-            build_root: pathlib.Path) -> tuple[list[str], list[str]]:
+            build_root: pathlib.Path, wrapper: str = DEFAULT_WRAPPER) -> tuple[list[str], list[str]]:
     manifest = json.loads(manifest_path.read_text())
     vc = find_vc(build_root)
     work = vc.parent
@@ -134,7 +141,7 @@ def collect(repo: pathlib.Path, manifest_path: pathlib.Path,
             continue
         files.append(str(source))
 
-    for extra in EXTRA_SOURCES:
+    for extra in (*EXTRA_SOURCES, wrapper):
         path = (repo / extra).resolve()
         if not path.is_file():
             raise SystemExit(f"required source missing: {path}")
@@ -165,6 +172,8 @@ def main() -> int:
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--build-root", required=True)
     ap.add_argument("--output", help="YAML fragment to write (default: stdout)")
+    ap.add_argument("--wrapper", default=DEFAULT_WRAPPER,
+                    help="per-design delivery wrapper (default: Block A)")
     ap.add_argument("--verify", metavar="CONFIG",
                     help="compare against an existing config's VERILOG_FILES "
                          "and fail on any difference")
@@ -172,7 +181,7 @@ def main() -> int:
 
     repo = pathlib.Path(args.repo).resolve()
     files, incs = collect(repo, pathlib.Path(args.manifest),
-                          pathlib.Path(args.build_root))
+                          pathlib.Path(args.build_root), wrapper=args.wrapper)
 
     if args.verify:
         text = pathlib.Path(args.verify).read_text()

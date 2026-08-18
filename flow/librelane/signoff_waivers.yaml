@@ -1,0 +1,107 @@
+# Recorded signoff waivers.
+#
+# A waiver here accepts a KNOWN defect at its MEASURED size, for ONE design,
+# until a stated date. It is not an exemption: `accepted_max` is a ceiling, so
+# a regression past the waived count fails the gate again. See
+# harness/evidence/waivers.py for the rules enforced at load time, and
+# docs/prompt_to_gds_path.md for why this one exists.
+#
+# Adding a waiver is a decision about silicon, not a way to make a run green.
+# If you are tempted to add one to unblock yourself, close the violation instead.
+#
+# ---- TWO SLEW WAIVERS RETIRED 2026-08-16 -------------------------------------
+# This file used to carry `design__max_slew_violation__count` waivers accepting
+# 56 on mosaic_block_a and 49 on mosaic_block_c. Both are GONE, and not because
+# the counts were argued down: the metric now reads ZERO on all three designs.
+#
+# They were never violations of anything the library objects to. max_transition
+# is declared per input pin AND per corner in GF180 -- 4.0 ns at tt_025C_5v00,
+# 7.0 ns at ss_125C_4v50, 2.6 ns at ff_n40C_5v50, 836 declarations per library
+# file -- while MAX_TRANSITION_CONSTRAINT: 4 emitted
+# `set_max_transition 4.0 [current_design]`, applying the TYPICAL corner's
+# number at all nine. Every violation ever counted here was at an ss_125C_4v50
+# corner, where the pins are rated to 7.0 ns:
+#
+#     shipped SDC        _56916_/ZN  limit 4.00  slew 5.664  -1.664  VIOLATED
+#     library per-pin    _56916_/ZN  limit 7.00  slew 5.664  +1.34   MET
+#
+# The fix was NOT to drop the constraint. That was tried (runs/blocka_libtran)
+# and is wrong: it is an optimisation target, so removing it costs 3.10% of
+# cell area and the design then degrades past the LIBRARY's own limits --
+# 7.1998 ns against a 7.0 ns pin rating, plus 5 max-capacitance violations
+# against per-cell liberty limits. The area repair spends is what keeps the
+# design qualified.
+#
+# The fix was to split PNR_SDC_FILE from SIGNOFF_SDC_FILE: PnR still targets
+# 4.0 ns, signoff checks each pin against its own liberty limit. Measured, one
+# differing config key in each case:
+#
+#     design          baseline run     netlist md5    max-slew   adverse
+#     mosaic_block_a  blocka_slew32 -> blocka_sdc   IDENTICAL   56 -> 0   2 -> 1
+#     mosaic_block_b  blockb_slew32 -> blockb_sdc   IDENTICAL   17 -> 0   2 -> 1
+#     mosaic_block_c  blockc_ant8   -> blockc_sdc   IDENTICAL   49 -> 0   2 -> 1
+#
+# Byte-identical netlists and setup/hold slack equal to the last printed digit:
+# the silicon did not change, only the number it is measured against. That is
+# why this is a retirement and not a relaxation.
+#
+# It is also not a blinded gate. The same library-limit check CAUGHT the
+# degraded blocka_libtran netlist (10 slew + 5 cap). It stopped reporting
+# non-defects; it still reports defects.
+#
+# ---- WHY THE SAME ARGUMENT DOES NOT RETIRE THE FANOUT WAIVER -----------------
+# Checked, rather than assumed by symmetry: the GF180 standard-cell libraries
+# declare NO max_fanout at all -- zero occurrences, and no default_max_fanout,
+# in every corner file. So MAX_FANOUT_CONSTRAINT: 10 has no library counterpart
+# being overridden. There is no truer limit to defer to, and dropping it would
+# remove the check rather than correct it. The violation below is a real
+# violation of a rule this project chose, and it stays waived on its merits.
+
+waivers:
+  - metric: design__max_fanout_violation__count
+    design: mosaic_block_a
+    accepted_max: 1
+    review_by: 2026-11-30
+    recorded_by: MILOUDIAS
+    evidence: flow/librelane/experimental/runs/blocka_sdc
+    justification: >
+      One net exceeds the maximum-fanout limit, consistently across all nine
+      corners, which indicates a structural fanout on a single high-load net
+      rather than a corner-dependent effect. The same single net has been
+      measured in every re-harden since, so it was never a corner or
+      parasitics artefact.
+
+      Re-based 2026-08-16 onto runs/blocka_sdc, which is the configuration that
+      ships: post-PnR netlist byte-identical to blocka_slew32
+      (md5 6d8ab8db6b7613b65f3232d33ef96a68), max-slew now 0, and every hard
+      check zero -- Magic DRC, KLayout DRC, LVS, XOR, routing DRC, antenna,
+      disconnected pins. Setup closes at +20.90 ns on a 100 ns period, hold at
+      +0.066 ns. This is now the ONLY adverse metric on the design.
+
+      Accepted as an electrical quality limit rather than a functional or
+      connectivity failure. Unlike the retired slew waivers, this one cannot be
+      dismissed as the wrong corner's number: the GF180 libraries declare no
+      max_fanout of their own, so 10 is a rule this project chose and a net
+      exceeding it genuinely exceeds it. A single violating net is also small
+      enough to be characterised precisely before the next submission rather
+      than argued about now.
+
+      NOT waived by this record: a second violating net -- `accepted_max: 1`
+      means exactly one, so any increase fails the gate; any other design; and
+      any max-slew, max-capacitance, DRC, LVS, XOR or antenna finding, all of
+      which are currently zero on this run and have no waiver to fall back on.
+
+# ---- ON THE TAPED-OUT GDS ----------------------------------------------------
+# The GDS that was actually taped out (runs/blocka_signoff) predates every flow
+# fix in this file's history. Checked against the CURRENT configuration it
+# would report 591 max-slew violations -- against the old blanket 4.0 ns limit,
+# so most of those were the same non-defects retired above, but it also predates
+# the post-GRT repair fix and the antenna iteration fix, which were real. It is
+# not re-measured here and no waiver covers it.
+#
+# NO WAIVER IS RECORDED FOR mosaic_block_b OR FOR mosaic_block_c's max-fanout.
+# Block B measures 1 violating net and Block C measures 4, both unwaived and
+# both therefore reported as adverse. That is deliberate: neither design is
+# being submitted, and a waiver for a design nobody is taping out would be
+# ceremony that makes a dashboard green. Record one if either is ever
+# submitted, with its own measurement.
