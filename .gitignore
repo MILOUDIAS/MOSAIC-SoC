@@ -119,7 +119,7 @@ sw/device/lib/drivers/pad_control/pad_control_regs.md
 # Openroad
 flow/OpenROAD-flow-scripts
 
-flow/librelane/experimental/runs/*
+# flow/librelane/experimental/runs/*
 
 # LibreLane final run outputs: the lightweight signoff evidence (metrics, .lef,
 # .sdc, .vh, .lib, render) and the signoff GDS are tracked; the heavy
