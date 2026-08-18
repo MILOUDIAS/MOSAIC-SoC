@@ -1,7 +1,0 @@
-`verilator_config
-lint_off -rule DECLFILENAME
-lint_off -rule EOFNEWLINE
-lint_off -rule UNDRIVEN -file "/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_signoff/tmp/012b6af22f324c7b8880c182fe6ca3b5.bb.v"
-lint_off -rule UNUSEDSIGNAL -file "/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_signoff/tmp/012b6af22f324c7b8880c182fe6ca3b5.bb.v"
-lint_off -rule UNDRIVEN -file "/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_signoff/tmp/1c0837290d4645edb7c45b8e2011fc1d.bb.v"
-lint_off -rule UNUSEDSIGNAL -file "/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_signoff/tmp/1c0837290d4645edb7c45b8e2011fc1d.bb.v"
