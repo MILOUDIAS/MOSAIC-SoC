@@ -22,18 +22,18 @@ DESIGN_NAME: mosaic_block_a
 # broken in this environment and the design elaborates cleanly under slang.
 USE_SLANG: true
 SLANG_ARGUMENTS:
-  - --allow-use-before-declare
-  - --relax-enum-conversions
-  - --relax-string-conversions
-  - --allow-hierarchical-const
-  - --compat
-  - vcs
-  # Drops SystemVerilog assertions. Without this, slang emits $check cells (97
-  # here, all from pulp rr_arb_tree) that have no physical cell to map to and
-  # stall the flow at Checker.YosysUnmappedCells. Note slang already defines
-  # SYNTHESIS implicitly (see --no-synthesis-define), so defining it by hand does
-  # nothing -- these assertions are not `ifndef SYNTHESIS guarded.
-  - --ignore-assertions
+- --allow-use-before-declare
+- --relax-enum-conversions
+- --relax-string-conversions
+- --allow-hierarchical-const
+- --compat
+- vcs
+# Drops SystemVerilog assertions. Without this, slang emits $check cells (97
+# here, all from pulp rr_arb_tree) that have no physical cell to map to and
+# stall the flow at Checker.YosysUnmappedCells. Note slang already defines
+# SYNTHESIS implicitly (see --no-synthesis-define), so defining it by hand does
+# nothing -- these assertions are not `ifndef SYNTHESIS guarded.
+- --ignore-assertions
 
 # VERILOG_FILES and VERILOG_INCLUDE_DIRS are NOT listed here.
 #
@@ -142,7 +142,7 @@ CLOCK_PORT: clk_i
 # The macro is gone with lever 1, so nothing forces a tight period; relaxing it
 # lets the optimizer stop spending area on timing-repair buffers, which were
 # 0.326 mm2 -- 24% of all standard-cell area.
-CLOCK_PERIOD: 40
+CLOCK_PERIOD: 100
 
 VDD_NETS: [VDD]
 GND_NETS: [VSS]
@@ -229,13 +229,13 @@ ERROR_ON_LINTER_WARNINGS: false
 # so they are inert here -- kept only so a later macro-backed variant does not
 # rediscover them.
 MAGIC_GDS_FLATGLOB:
-  - "*_CDNS_*"
-  - "*$$*"
-  - "nmos_5p0*"
-  - "nmos_1p2*"
-  - "pmos_5p0*"
-  - "pmos_1p2*"
-  - "via1_*"
+- "*_CDNS_*"
+- "*$$*"
+- "nmos_5p0*"
+- "nmos_1p2*"
+- "pmos_5p0*"
+- "pmos_1p2*"
+- "via1_*"
 
 KLAYOUT_FILLER_OPTIONS:
   Metal2_ignore_active: true
