@@ -1,0 +1,14 @@
+{
+    "json_h": "/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_25mhz/05-yosys-jsonheader/mosaic_block_a.h.json",
+    "nl": "/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_25mhz/06-yosys-synthesis/mosaic_block_a.nl.v",
+    "metrics": {
+        "design__lint_error__count": 0,
+        "design__lint_timing_construct__count": 0,
+        "design__lint_warning__count": 3773,
+        "design__inferred_latch__count": 0,
+        "design__instance__count": 33852,
+        "design__instance__area": 854953.568,
+        "design__instance_unmapped__count": 0,
+        "synthesis__check_error__count": 0
+    }
+}
