@@ -546,11 +546,11 @@ soc:
 Every one of those knobs was measured, not guessed; the derivation is in
 [`docs/area_study_gf180_min_soc.md`](docs/area_study_gf180_min_soc.md) §8c–§8g.
 
-### Block A macro — 22 pins
+### Block A macro: 22 I/O cells
 
 `flow/librelane/experimental/mosaic_block_a.sv` wraps `core_v_mini_mcu` and terminates
-its other 251 ports internally (unused inputs tied to constants; unused outputs omitted
-so synthesis prunes the logic that drove them).
+its other 251 ports internally: unused inputs tied to constants, unused outputs omitted
+so synthesis prunes the logic that drove them.
 
 | Dir    | Count | Pins                                                                                |
 | ------ | ----: | ----------------------------------------------------------------------------------- |
@@ -558,15 +558,21 @@ so synthesis prunes the logic that drove them).
 | output |    11 | `spi_flash_sck_o`, `spi_flash_cs_o`, `uart_tx_o`, `status_valid_o`, `status_o[6:0]` |
 | inout  |     6 | `spi_flash_sd_io[3:0]`, `VDD`, `VSS`                                                |
 
-`status_o[6:0]` is driven from `soc_ctrl`'s exit register. With `debug: false` and no
-JTAG it is the **only** observability this part has — it must be bonded, not tied off.
+`status_o[6:0]` carries `soc_ctrl`'s exit register. With `debug: false` and no JTAG it is
+the only observability this part has, so it must be bonded rather than tied off.
 
-### Signoff run — nothing skipped
+**22 counts I/O cells, not macro ports.** The padframe expects this macro to drive each
+pad's control terminals as well as its data, which `D15_ACE.def` spells out as 167:
+5 input pads × 3 (`PU`, `PD`, signal), 15 `bi_t` pads × 10 (`CS`, `SL`, `IE`, `OE`, `PU`,
+`PD`, `A`, `PDRV0`, `PDRV1`, `Y`), plus `vdd` and `vss`. The wrapper does not expose those
+yet. That change, and the hardening run against the padframe DEF, is what stands between
+this macro and a submission.
 
-Two configs harden this block. `config_blocka.yaml` skips the verification decks to keep
-the area loop short; **`config_blocka_signoff.yaml` runs all of them** — Magic DRC,
-KLayout DRC, Magic SPICE extraction, Netgen LVS, KLayout XOR, antenna, and IR drop — and
-any of them can fail the flow.
+### Signoff run: nothing skipped
+
+`config_blocka.yaml` skips the verification decks to keep the area loop short. The signoff
+config runs all of them, and any can fail the flow: Magic DRC, KLayout DRC, Magic SPICE
+extraction, Netgen LVS, KLayout XOR, antenna, and IR drop.
 
 ```bash
 make mosaic-gen MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml   # generate the RTL first
@@ -574,87 +580,102 @@ cd flow/librelane
 ./experimental/run_signoff.sh          # hours, not minutes
 ```
 
-The runner greps its own config for `substituting_steps` / `: null` and **aborts** rather
-than let a signoff run quietly become a partial one, and it reports through
+The runner greps its own config for `substituting_steps` and nulled step ids, then aborts
+rather than let a signoff run quietly become a partial one. It reports through
 `harness/evidence/librelane.py`, which will not call a missing report clean.
 
-Neither config carries an absolute path. `flow/librelane/scripts/gen_filelist.py` resolves
-`VERILOG_FILES`/`VERILOG_INCLUDE_DIRS` from the FuseSoC manifest at run time — the same
-thing `tb/mosaic_soc/gen_filelist.py` has always done for the sim flows — and the runner
-merges the result into a run-local copy of the config, so a fresh clone hardens without
-editing anything. If the RTL has not been generated the runner **stops**: the dangerous
-failure was never a missing file but a path that still _resolved_, to an older bundle,
-hardening stale RTL and reporting it clean. The generated list reproduces the previous
-hand-maintained one exactly (507/507 files) and re-synthesises to the same 854 954 µm² /
-33 852 cells; `test/test_x_heep_gen/test_librelane_filelist.py` fails the build if a config
-ever regains an absolute path.
+No config carries an absolute path. `flow/librelane/scripts/gen_filelist.py` resolves
+`VERILOG_FILES` and `VERILOG_INCLUDE_DIRS` from the FuseSoC manifest at run time, the same
+way `tb/mosaic_soc/gen_filelist.py` has always done for the sim flows, and the runner
+merges the result into a run-local copy. A fresh clone hardens without editing anything.
+If the RTL has not been generated the runner stops: the dangerous failure was never a
+missing file but a path that still resolved, to an older bundle, hardening stale RTL and
+reporting it clean. `test/test_x_heep_gen/test_librelane_filelist.py` fails the build if a
+config ever regains an absolute path.
 
-### Measured result (2026-08-01, signoff run)
+### Measured result: 1110 × 1110 µm at 20 MHz
 
-GF180MCU `gf180mcu_fd_sc_mcu7t5v0`, LibreLane 3.0.0 Classic flow, no `--skip`:
+GF180MCU `gf180mcu_fd_sc_mcu7t5v0`, LibreLane 3.0.0 Classic flow, no `--skip`.
+Run `blocka_1110_ndr`:
 
-|                                      |                                                              Value |
-| ------------------------------------ | -----------------------------------------------------------------: |
-| die                                  |     **1117.5 × 1117.5 µm = 1.2488 mm²** (exactly the Block A slot) |
-| utilization                          |                                                              84.4% |
-| standard cells                       |                                                             44 355 |
-| **Magic DRC**                        |                                                              **0** |
-| **KLayout DRC**                      |                                                              **0** |
-| **Netgen LVS**                       | **0** — _"Circuits match uniquely"_, 0 unmatched devices/nets/pins |
-| **KLayout↔Magic XOR**               |                                                  **0 differences** |
-| routing DRC                          |                       **0** (both antenna-repair passes converged) |
-| antenna violations                   |                                                              **0** |
-| illegal overlaps / disconnected pins |                                                          **0 / 0** |
-| power-grid violations                |                                                **0** (VDD and VSS) |
-| worst IR drop                        |                                                  **120 µV** on 5 V |
-| worst setup slack                    |                                                      **+20.86 ns** |
-| worst hold slack                     |                                                      **+0.066 ns** |
-| setup / hold TNS                     |                                          0 / 0 at all nine corners |
-| **max-capacitance violations**       |                                                              **0** |
-| **max-fanout violations**            |                                                              **1** |
-| max-slew violations                  |                   **591** (against the library's own 4.0 ns limit) |
+|                                      |                                                               Value |
+| ------------------------------------ | ------------------------------------------------------------------: |
+| die                                  |                                     **1110 × 1110 µm = 1.2321 mm²** |
+| utilisation                          |                                                              85.37% |
+| standard cells                       |                                                              44 498 |
+| **Magic DRC** / **KLayout DRC**      |                                                       **0** / **0** |
+| **Netgen LVS**                       | **0**, _"Circuits match uniquely"_, 0 unmatched devices, nets, pins |
+| **KLayout↔Magic XOR**               |                                                   **0 differences** |
+| routing DRC / antenna                |                                                       **0** / **0** |
+| illegal overlaps / disconnected pins |                                                       **0** / **0** |
+| power-grid violations                |                                                 **0** (VDD and VSS) |
+| worst setup slack                    |                            **+6.066 ns**, TNS 0 at all nine corners |
+| worst hold slack                     |                            **+0.075 ns**, TNS 0 at all nine corners |
+| **max-slew / max-capacitance**       |                                     **0** / **0**, all nine corners |
+| max-fanout violations                |                                                       **4**, waived |
+| functional post-route GLS            |                                     **EXIT SUCCESS**, 12 400 cycles |
 
-LVS matched the 22-pin contract above pin-for-pin against _extracted layout_, rather than
-taking the wrapper's port list on trust. Functionally verified at RTL:
-`### RESULT: EXIT SUCCESS — all 2 configured harts executed ✓`, plus a UART bring-up test
-(`MOSAIC_CFG=… tb/mosaic_soc/run_uart.sh`) that measures the TX FIFO depth, compares polled
-transmission against the UART DPI log, and exercises RX through loopback — written because
-the area work had cut both UART FIFOs from 32 to 4 entries and nothing tested the result.
+LVS matched the pin contract against _extracted layout_ rather than taking the wrapper's
+port list on trust.
 
-Artifacts: [`flow/librelane/experimental/runs/blocka_signoff/final/`](flow/librelane/experimental/runs/blocka_signoff/final/)
-— gds, lef, lib (9 corners), nl/pnl, sdc, odb, and the extracted spice netlist LVS
-compared against.
+**The die is 1110 because 1110 is the A-block maximum.** Our earlier 1117.5 µm exceeded
+it, which is why the padframe generator had fallen back to a larger slot. Shrinking cost
+us: it introduced 6 max-slew and 2 max-capacitance violations against per-pin liberty
+limits that the larger die did not have.
 
-### ⚠️ What is still open
+Closing them took a targeted lever, and finding it took a measurement. Every violating net
+had a **fanout of one**, so its capacitance was wire rather than load and no amount of
+buffering could reach it. A non-default routing rule doubling spacing on three nets took
+both counts to zero for **4 µm² of cell area**, leaving setup unchanged to four decimal
+places. Every blanket alternative made this design worse:
 
-DRC and LVS are clean; that is not the same as tapeout-ready.
+| lever                           | scope        | result                        |
+| ------------------------------- | ------------ | ----------------------------- |
+| `bufz_8` on the QSPI pads       | blanket      | max-slew 591 → 785            |
+| `CTS_MAX_CAP: 0.15`             | blanket      | max-cap 27 → 35               |
+| repair margins slew 45 + cap 40 | blanket      | slew 6 → 43, cap 2 → 24       |
+| **routing rule on 3 nets**      | **targeted** | slew 6 → **0**, cap 2 → **0** |
 
-- **591 max-slew violations**, worst 5.19 ns against the 4.0 ns every cell in this library
-  declares. Down from 2 889; max-cap and max-fanout are effectively closed (0 and 1). Most
-  of the original count was an artifact of measuring against a blanket 3 ns / 0.2 pF
-  constraint _tighter than the library's own limits_ — the 0.2 pF cap limit sat below even
-  the weakest clock buffer's rating. The remainder are real and need per-net attention, not
-  another global knob: upsizing the QSPI pad drivers to `bufz_8` was measured and made
-  things **worse** (785 slew, 9.51 ns worst), because those pads are input-slew limited.
-  No DRC or LVS deck looks at these, and setup/hold closing does not imply them: at
-  `CLOCK_PERIOD: 100` the resizer has ~21 ns of slack and so no timing pressure to repair
-  transitions. This is the last known gap between this macro and a submittable one.
-- **Timing-annotated gate-level simulation is unavailable with open tools.** Functional GLS
-  on the routed netlist passes (`tb/gls/run_gls.sh`), but SDF back-annotation is blocked:
-  the PDK cell models use `ifnone` on edge-sensitive specify paths, which IEEE 1364-2005
-  §14.2.6 forbids and both iverilog and CVC reject, and CVC then segfaults on a netlist
-  this size. Timing coverage is STA's, at nine corners.
+At 85% utilisation on a fixed die, added cells cost more in routing than they buy in
+drive: the margin increase inserted 1 283 buffers instead of 484, raising utilisation
+1.35 points and wirelength 6%.
+
+**20 MHz is a measured choice.** The same die also closes at 25 MHz with every check
+clean, at **+0.089 ns** of setup against **+6.066 ns**. Single-variable edits during this
+work moved setup by 0.245 ns and 0.693 ns, both larger than 0.089, and the wrapper change
+above still needs its own run. One SoC config describes the part; the clock lives in it as
+`soc.objectives.target_clock_mhz`, so changing the target is one line and a re-run.
+
+Artifacts: `flow/librelane/experimental/runs/blocka_1110_ndr/final/` holds gds, lef, lib at
+nine corners, nl/pnl, sdc, odb, and the extracted spice netlist LVS compared against.
+
+### What is still open
+
+DRC and LVS are clean. That is not the same as tapeout-ready.
+
+- **The padframe interface.** The wrapper exposes 22 signals; the DEF expects 167 pad
+  terminals. Until it drives `OE`, `IE`, `CS`, `SL`, `PU`, `PD` and `PDRV0/1` per pad, the
+  macro cannot be hardened against `FP_DEF_TEMPLATE`. This is the blocker.
+- **4 max-fanout violations**, gated-clock roots at fanout 16 against our own
+  `MAX_FANOUT_CONSTRAINT: 10`. GF180 declares no `max_fanout`, and all four meet slew and
+  capacitance at every corner on a run where both counts are zero, but the electrical
+  review treats fanout as a closure item so they are recorded as open.
+- **Timing-annotated gate-level simulation is unavailable with open tools.** Functional
+  GLS on the routed netlist passes (`tb/gls/run_gls.sh`), but SDF back-annotation is
+  blocked: the PDK cell models use `ifnone` on edge-sensitive specify paths, which
+  IEEE 1364-2005 §14.2.6 forbids and both iverilog and CVC reject, and CVC then segfaults
+  on a netlist this size. Timing coverage is STA's, at nine corners.
 - **The run bypasses the `PHYSICAL_BUNDLE` attestation gate** (see §9), so a clean result
-  here is evidence about the layout, not a qualified tapeout input.
-- `bufz_4` drive strength on the QSPI pins is a placeholder pending the integrator's pad
-  loading, and `status_o[6:0]` must be bonded.
-- Hold margin is **+66 ps**. Positive at every corner, but thin — it was bought by
-  lowering `PL_RESIZER_HOLD_SLACK_MARGIN` to trade hold margin for area. Anyone tightening
-  the clock should re-check it first.
+  here is evidence about the layout rather than a qualified tapeout input.
+- `PDRV0/1` drive strength and the `rst_ni` pull are proposals pending the integrator's
+  loading figures, and `status_o[6:0]` must be bonded.
+- Hold margin is **+75 ps**. Positive at every corner, and bought by lowering
+  `PL_RESIZER_HOLD_SLACK_MARGIN` to trade hold for area. Re-check it before tightening the
+  clock.
 
 Getting here cost three bugs, including one (`soc_ctrl` reads returning `error=1,
-rdata=0`) that was introduced by an earlier fix, shipped in a previously committed GDS,
-and was masked by `ERROR_ON_SYNTH_CHECKS: false`. See the
+rdata=0`) introduced by an earlier fix, shipped in a previously committed GDS, and masked
+by `ERROR_ON_SYNTH_CHECKS: false`. See the
 [bug tracker](DASHBOARD.md#7-bug-tracker-all-fixed), entries 28–30.
 
 ---
@@ -721,23 +742,27 @@ env vars to the `tb/mosaic_soc` scripts.
   log-xbar, FlooNoC, SCI cocotb, TL→OBI bridge, 11 wake demos, 3 all-TITAN SMP, production
   firmware, the no-LLM prompt→SoC pipeline, tb-smith single-hart TBs, and generator pytest).
   A nightly-Verilator DFG miscompile of cv32e40x was root-caused and pinned around.
-- ✅ **Block A macro DRC/LVS clean** (2026-08-01): `mosaic_tapeout_ultra` hardened to the
-  1117.5 µm Chipathon slot passes Magic DRC, KLayout DRC, Netgen LVS ("circuits match
-  uniquely"), XOR, antenna and IR drop with **nothing skipped** — see §9a. Reproducible
-  from a fresh clone: `make mosaic-gen MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml`, then
-  `flow/librelane/experimental/run_signoff.sh` — the configs carry no absolute paths and
+- ✅ **Block A macro clean at the mandated die** (2026-08-24): `mosaic_tapeout_ultra`
+  hardened to **1110 × 1110 µm at 20 MHz** passes Magic DRC, KLayout DRC, Netgen LVS
+  ("circuits match uniquely"), XOR, antenna, IR drop and the power grid with **nothing
+  skipped**, and reaches **max-slew 0 and max-capacitance 0 at all nine corners**. See
+  §9a. 1110 is the A-block maximum; the earlier 1117.5 µm exceeded it. Reproducible from
+  a fresh clone: `make mosaic-gen MOSAIC_CFG=configs/mosaic_tapeout_ultra.yaml`, then
+  `flow/librelane/experimental/run_signoff.sh`. The configs carry no absolute paths and
   the source list is resolved from the FuseSoC manifest at run time.
-- ✅ **Gate-level simulation** (2026-08-03): the post-place-and-route netlist — the gates
-  in the GDS — boots XIP from a behavioural flash through only the 22 bonded pins and
-  reports **EXIT SUCCESS in 12 399 cycles**, against the RTL's ~12 400. Run it with
-  `tb/gls/run_gls.sh`; see [`tb/gls/README.md`](tb/gls/README.md).
-- 🔜 Remaining before tapeout: **591 max-slew violations** against the library's own 4.0 ns
-  (max-cap and max-fanout are 0 and 1), **timing-annotated GLS** — blocked by a
-  non-standard construct in the PDK cell models plus a CVC crash, so timing rests on STA
-  at nine corners — and the `PHYSICAL_BUNDLE` attestation path (a bound adapter and
-  qualified 32-KiB SRAM bundle) for the chip-level flow.
+- ✅ **Gate-level simulation**: the post-place-and-route netlist, the gates in the GDS,
+  boots XIP from a behavioural flash through only the bonded pins and reports **EXIT
+  SUCCESS in 12 400 cycles** on the 1110 µm run. Run it with `tb/gls/run_gls.sh`; see
+  [`tb/gls/README.md`](tb/gls/README.md).
+- 🔜 Remaining before tapeout: the **padframe interface**, since the wrapper exposes 22
+  signals where the DEF expects 167 pad terminals, and that hardening run; **4 max-fanout
+  violations** on gated-clock roots against a limit this project chose rather than one the
+  library states; **timing-annotated GLS**, blocked by a non-standard construct in the PDK
+  cell models plus a CVC crash, so timing rests on STA at nine corners; and the
+  `PHYSICAL_BUNDLE` attestation path (a bound adapter and qualified 32-KiB SRAM bundle)
+  for the chip-level flow.
 
-\*\*Phase 2 — agentic harness (oh-my-soc): ,
+\*\*Phase 2 — agentic harness (oh-my-soc):,
 [`harness/README.md`](harness/README.md), [`demo/README.md`](demo/README.md)):
 
 - ✅ **First-class executable with an omp-style first run**: `./oh-my-soc <skill> <cmd>`
@@ -796,17 +821,18 @@ outputs: [`demo/README.md`](demo/README.md).
 
 The claim this project makes is that an LLM authors _configuration_ while
 deterministic Python generates and checks. Here it is on the design that
-actually matters — the Chipathon Block A part being taped out:
+matters most here, the Chipathon Block A part being taped out:
 
 ```bash
 ./demo/03_blocka_from_prompt.sh
 ```
 
 ```
-fields compared : 16
-fields matching : 16
+fields compared : 18
+fields matching : 18
 → the prompt reproduced the frozen tapeout config exactly, including all
-  eight selectable platform blocks and both cores' with_csr/compressed/boot_addr
+  eight selectable platform blocks, both cores' with_csr/compressed/boot_addr,
+  and the 20 MHz clock target
 ```
 
 The second half matters more. Remove one clause — `no debug` — and the same
@@ -911,7 +937,7 @@ Python — a tapeout deliverable cannot depend on a model. The baseline proof:
 `soc-from-prompt` reaches full-SoC **EXIT SUCCESS with no LLM at all**, using
 a regex grammar.
 
-Where LLMs actually plug in, and what checks each one:
+Where LLMs plug in, and what checks each one:
 
 | LLM contribution                                                                           | Mechanism                                                                                                                                                                 | Deterministic check                                                                                                                                                                        |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
