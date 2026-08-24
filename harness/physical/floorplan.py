@@ -161,12 +161,16 @@ class AreaMeasurement:
 # counts of different things. logic_um2, core_um2, die_side_um and utilisation
 # ARE comparable throughout; only the violation counts moved.
 CALIBRATION: Tuple[AreaMeasurement, ...] = (
+    # blocka_1110_ndr is the SUBMITTED configuration: 1110 um (the A-block
+    # maximum, mandated -- 1117.5 exceeded it) at 20 MHz, with a non-default
+    # routing rule on three fanout-1 nets. Zero max-slew and zero max-cap at all
+    # nine corners, which no earlier Block A run achieved.
     AreaMeasurement(
-        design="mosaic_block_a", run_tag="blocka_sdc", serv_harts=2,
-        logic_um2=959_888, core_um2=1_169_330,
-        die_side_um=1117.5, utilisation=0.821,
-        max_slew_violations=0, max_fanout_violations=1, max_cap_violations=0,
-        source="flow/librelane/experimental/runs/blocka_sdc/final/metrics.json",
+        design="mosaic_block_a", run_tag="blocka_1110_ndr", serv_harts=2,
+        logic_um2=952_726, core_um2=1_157_260,
+        die_side_um=1110.0, utilisation=0.823,
+        max_slew_violations=0, max_fanout_violations=4, max_cap_violations=0,
+        source="flow/librelane/experimental/runs/blocka_1110_ndr/final/metrics.json",
     ),
     AreaMeasurement(
         design="mosaic_block_b", run_tag="blockb_sdc", serv_harts=3,

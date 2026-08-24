@@ -1,6 +1,6 @@
 # MOSAIC-SoC Progress Dashboard
 
-> **IEEE SSCS Chipathon 2026 · Track D · GF180MCU · Updated: 2026-08-17**
+> **IEEE SSCS Chipathon 2026 · Track D · GF180MCU · Updated: 2026-08-24**
 
 ---
 
@@ -18,7 +18,51 @@ Phase 3 moved 80 → 95 on 2026-08-16: electrical closure is done on all three b
 waiver), and 25 MHz is measured. It is **not** 100% because the tapeout tag waits on a
 clock target only the track lead can set.
 
-**Headline (2026-08-17): re-review returned GO, and the last electrical gap turned out
+**Headline (2026-08-24): the submitted macro is now 1110 × 1110 µm at 20 MHz, with
+zero max-slew and zero max-capacitance at all nine corners.** That is the cleanest
+Block A result the project has had, and it came from two findings.
+
+**The die was oversized and nobody had told us.** @d-m-bailey reported that the A
+block's maximum is 1110 µm and our 1117.5 µm PR boundary exceeded it, which is why
+the padframe generator had fallen back to a larger 1675 µm slot. Shrinking to 1110
+introduced 6 max-slew and 2 max-capacitance violations that the larger die did not
+have, against per-pin liberty limits at every corner.
+
+**Only a targeted lever fixed them.** Four were measured on this design:
+
+| lever | scope | result |
+|---|---|---|
+| `bufz_8` on the QSPI pads | blanket | max-slew 591 → 785 |
+| `CTS_MAX_CAP: 0.15` | blanket | max-cap 27 → 35 |
+| repair margins slew 45 + cap 40 | blanket | slew 6 → **43**, cap 2 → **24** |
+| **non-default routing rule, 3 nets** | **targeted** | slew 6 → **0**, cap 2 → **0** |
+
+The blanket margin increase failed measurably: repair inserted 1,283 buffers
+instead of 484, taking utilisation up 1.35 points and wirelength up 6.0 %. At
+~85 % on a mandated die, added cells cost more in routing than they buy in drive.
+What identified the right lever was that **every violating net has a fanout of
+one**, so its capacitance is wire rather than load and no amount of buffering
+could reach it. The rule cost **+4 µm² of cell area** and left setup unchanged to
+four decimal places. This is the reviewer's own advice, per-net rather than
+blanket, and it is the only thing that worked.
+
+**20 MHz is a measured choice, not a retreat.** 25 MHz also closes on the 1110 µm
+die with every check clean, at +0.089 ns — 0.22 % of the period. Single-variable
+edits during this work moved setup by 0.245 ns and 0.693 ns, and a wrapper rewrite
+is still ahead, so 20 MHz was taken for its 12.13 % margin.
+
+`runs/blocka_1110_ndr`: DRC 0, LVS clean and unique, XOR 0, antenna 0, power-grid
+0, setup +6.066 ns TNS 0, hold +0.075 ns TNS 0, max-slew 0, max-cap 0, GLS EXIT
+SUCCESS in 12,400 cycles. **One adverse metric remains**: 4 gated-clock roots at
+fanout 16, waived at `accepted_max: 4` after the waiver was rewritten — it had
+called them "a single high-load net", which was wrong in both particulars.
+
+**Still open, and it is the real blocker:** the macro exposes 22 ports and the
+padframe DEF expects it to drive the pad control terminals (`_OE`, `_IE`, `_CS`,
+`_SL`, `_PU`, `_PD`, `_PDRV0/1`, `_OUT`, `_IN`). That wrapper rewrite and its
+re-harden will move every number above.
+
+**Previously (2026-08-17): re-review returned GO, and the last electrical gap turned out
 not to be one.** The reviewer's second must-close item — *"591 max-slew (worst 5.19 ns vs
 the library's 4.0 ns) … all at `ss_125C_4v50`, TT and FF clean"* — was measured against
 the wrong corner's limit, and the mistake was **ours**: this dashboard and the closure
@@ -53,8 +97,9 @@ intent, derived into `CLOCK_PERIOD` — and is a **request, not an agreed target
 
 **Previously (2026-08-02):** the Block A macro is **DRC and LVS clean**, and the RTL is
 frozen and tagged (`rtl-freeze-blocka-v2`) in answer to the schematic review — see
-[`docs/rtl_freeze_blocka.md`](docs/rtl_freeze_blocka.md) and
-[`docs/chipathon_review_response.md`](docs/chipathon_review_response.md).
+[`docs/chipathon_review_response.md`](docs/chipathon_review_response.md) for that reply
+as sent. (The closure report [`docs/rtl_freeze_blocka.md`](docs/rtl_freeze_blocka.md) has
+since been re-scoped to the *re-review*; the first-review material is at `ec3a194`.)
 The macro has been **re-hardened** with the bug-31 fix in it and the electrical repair
 enabled: **max-cap 27 → 0, max-fanout 411 → 1, max-slew 2 889 → 591** ~~against the
 library's own 4.0 ns limit~~ — against a blanket 4.0 ns SDC constraint, which is the
@@ -161,12 +206,14 @@ M21: Gate-level simulation             █████████████�
 M19: Block A power delivery (PSM)      ████████████████████  DONE     (Aug 01, 0 grid violations)
 M22: Re-review GO + slew closed        ████████████████████  DONE     (Aug 16; 591 → 0 vs library limits, both slew waivers retired)
 M23: Blocks B and C signed off         ████████████████████  DONE     (Aug 16; all three at 0 on every hard check, C's antenna closed)
-M14: Tapeout-ready GDSII               ██████████████████░░  IN PROG  ← blocked ONLY on the track lead locking a clock
+M24: Mandated 1110 um die, slew/cap 0  ████████████████████  DONE     (Aug 24; NDR on 3 fanout-1 nets, 20 MHz)
+M14: Tapeout-ready GDSII               ██████████████████░░  IN PROG  ← blocked on the padframe wrapper (22 -> pad control terminals)
 ```
 
-**M14 is no longer blocked on us.** Electrical closure is done: max-slew 0, max-cap 0,
-antenna 0, DRC/LVS/XOR/routing 0, and one accepted max-fanout waiver. 25 MHz is measured
-and closes. What remains is a decision by the track lead / integration team, plus the
+**M14 is blocked on the padframe wrapper.** Electrical closure is done on the mandated
+1110 um die at 20 MHz: max-slew 0, max-cap 0, antenna 0, DRC/LVS/XOR/routing 0, one
+accepted max-fanout waiver. The clock is settled. What remains is exposing the pad
+control terminals so the macro can be hardened against the padframe DEF, plus the
 `ifnone` question for the organizers — see §9.
 
 ---
@@ -193,7 +240,7 @@ and closes. What remains is a decision by the track lead / integration team, plu
 | ID | Task | Priority | Component | Notes |
 |----|------|----------|-----------|-------|
 | **N-06** | ~~GF180MCU DRC/LVS signoff~~ | ~~HIGH~~ | `flow/librelane/` | ✅ **DONE 2026-08-01** (re-run 08-02 with the bug-31 fix). Every deck ran with nothing skipped: Magic DRC 0, KLayout DRC 0, Netgen LVS *"circuits match uniquely"*, XOR 0, antenna 0, IR drop 120 µV. Landed as P-07 / D-84. What remains is electrical, not deck: 591 max-slew (P-11) |
-| **N-07** | ~~50 MHz~~ STA closure | **HIGH** | `flow/librelane/` | **Re-scoped.** Multi-corner STA now runs and Block A CLOSES at 10 MHz: setup +20.67 ns, hold +0.075 ns, TNS 0 at every corner. 50 MHz was never re-attempted after the clock was relaxed to cut timing-repair buffers (0.326 → 0.114 mm²). **Decide whether 50 MHz is still a requirement** |
+| **N-07** | Clock target | — | `flow/librelane/` | **CLOSED 2026-08-24.** The track lead confirms each project sets its own clock. 20 MHz chosen and hardened on the mandated 1110 um die (`runs/blocka_1110_ndr`): setup +6.066 ns, 12.13% margin. 25 MHz also closes at 0.22% and was rejected for margin |
 | **N-08** | ~~Target area validation (1.249 mm²)~~ | ~~MED~~ | Post-synthesis + P&R | ✅ **DONE 2026-07-31.** Block A hardened to exactly 1117.5 × 1117.5 µm = **1.2488 mm²** — the Chipathon slot. Full measured path 3.903 → 1.249 mm² in area study §8c–§8g. Moved to the Done log as D-81/D-84 |
 | **N-05** | Per-core power domains | LOW | `ao_peripheral_subsystem.sv.tpl` | Power manager is single-domain |
 | **N-09** | Formal verification (riscv-formal) | LOW | SCI wrappers | Not started |
@@ -333,7 +380,7 @@ Seventy-eight deliverables, grouped by area. IDs are stable (referenced elsewher
 | D-82 | `mosaic_tapeout_ultra` config | `configs/mosaic_tapeout_ultra.yaml` | The Block A candidate: 2× SERV, UART, XIP, 128 B scratchpad |
 | D-83 | Chipathon Block A 22-pin macro | `flow/librelane/experimental/mosaic_block_a.sv` | Exposes 22 pins, terminates 251 ports internally |
 | D-84 | **Block A signed-off GDS** | `flow/librelane/experimental/runs/blocka_signoff/final/` | 1117.5 µm square. Magic DRC 0, KLayout DRC 0, Netgen LVS "circuits match uniquely", XOR 0, antenna 0, routing DRC 0, IR drop 120 µV. Re-hardened 2026-08-02 with the bug-31 fix and post-GRT electrical repair: max-cap 0, max-fanout 1, max-slew 591. Reproducible from a fresh clone since D-90 — the config that built it no longer names a path from this machine |
-| D-86 | **RTL freeze record + review response** | `docs/rtl_freeze_blocka.md`, `docs/chipathon_review_response.md`, tag `rtl-freeze-blocka-v1` | Frozen config, verification trace, 22-pin map, waivers, tool versions; point-by-point answer to the schematic review. Open item 8 (absolute paths in the LibreLane configs) closed 2026-08-03 by D-90 |
+| D-86 | **RTL freeze record + review responses** | `docs/rtl_freeze_blocka.md`, `docs/chipathon_review_response.md`, `docs/chipathon_response_issue134.md`, tag `rtl-freeze-blocka-v1` | **Re-scoped 2026-08-18:** `rtl_freeze_blocka.md` is now the closure report against the RE-REVIEW (issue #134, outcome Go) and its three must-close items — config consistency, signoff numbers, clock/slew/GLS. The first-review material it replaced is in git history at `ec3a194`. `chipathon_review_response.md` is the reply to the first review as sent; `chipathon_response_issue134.md` is the single reply to @tai08 covering BOTH his re-review (2026-08-10) and his layout review (2026-08-18), ready to post — they were drafted separately and merged, because only a two-line acknowledgement was posted on the 10th and the same reviewer wrote both |
 | D-89 | **Prompt → tapeout config showcase** | `demo/03_blocka_from_prompt.sh`, `harness/skills/soc_from_prompt.py` | The Block A part generated from one prompt, field-for-field identical to the hand-written config; false `tapeout` claims refused by the capability gate |
 | D-88 | **Gate-level simulation** | `tb/gls/` | Functional GLS on the routed netlist passes cycle-for-cycle with RTL. Timing-annotated GLS blocked: PDK models use `ifnone` on edge-sensitive paths (illegal per IEEE 1364-2005 §14.2.6) and CVC segfaults at this scale |
 | D-87 | **UART bring-up test** | `tb/mosaic_soc/run_uart.sh`, `prog_uart/uart.S` | TX FIFO depth measured = 4, polled TX verified against the UART DPI log, RX via loopback. EXIT SUCCESS. Doubles as the bug-31 regression |
@@ -566,7 +613,7 @@ built-in `oh-my-soc agent` runtime for API-driven sessions.
 | Routing convergence is placement-sensitive near 82% utilization | MED | MED | One run stalled at 2 violations for 30 passes; a re-seed at 69% util reached 0. Budget a re-spin; do not assume determinism |
 | ~~**591 max-slew violations remain**~~ **CLOSED 2026-08-16** | — | — | They were measured against `tt_025C_5v00`'s 4.0 ns applied at all nine corners; at `ss_125C_4v50`, where all 591 sat, the pins are rated 7.0 ns. 0 against per-pin liberty limits at every corner, on byte-identical netlists. Both slew waivers retired |
 | **Clock target not locked** | HIGH | CERTAIN | The only item blocking a tapeout tag, and not ours to close. 25 MHz measured and closes, but at **4.2% margin** (+1.663 ns of 40 ns) and the binding path moves inside the core. If the locked target is higher, that margin is where it will be spent |
-| **1 max-fanout violation, waived** | LOW | CERTAIN | Real: GF180 declares no `max_fanout`, so `MAX_FANOUT_CONSTRAINT: 10` is a rule we chose and the net genuinely exceeds it. `accepted_max: 1`, so a second violating net fails the gate |
+| **4 max-fanout violations, waived** | LOW | CERTAIN | Four gated-clock roots at fanout 16. GF180 declares no `max_fanout`, so the limit of 10 is ours. They meet slew and cap at every corner on a run where both counts are 0, skew is 3.598 ns against 3.644 on the larger die, and GLS passes. `accepted_max: 4`; a fifth fails the gate |
 | GitHub LFS quota (1 GB free tier) | LOW | LOW | Deliverable trimmed to gds/lef/netlist/lib/sdc/odb = 95 MB (~10%); regenerable views gitignored |
 
 ---

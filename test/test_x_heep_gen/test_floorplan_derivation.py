@@ -328,13 +328,18 @@ def test_utilisation_observations_include_every_run():
 
     tags = {m.run_tag for m in UTILISATION_OBSERVATIONS}
     assert tags == {
-        # current template -- repair margin 32 plus SIGNOFF_SDC_FILE, and the
-        # CALIBRATION points. Each _sdc run's post-PnR netlist is BYTE-IDENTICAL
-        # to the run it replaces (blocka_slew32, blockb_slew32, blockc_ant8):
-        # same silicon, signed off against each pin's own liberty
-        # max_transition instead of a blanket 4.0 ns. Citation change, not a
-        # re-measurement -- logic_um2 is unchanged in all three.
-        "blocka_sdc", "blockb_sdc", "blockc_sdc",
+        # current template plus SIGNOFF_SDC_FILE, and the CALIBRATION points.
+        # Blocks B and C are the _sdc runs, whose post-PnR netlists are
+        # BYTE-IDENTICAL to the runs they replace (blockb_slew32, blockc_ant8):
+        # same silicon, signed off against each pin's own liberty max_transition
+        # instead of a blanket 4.0 ns.
+        #
+        # Block A is blocka_1110_ndr, which IS a re-measurement rather than a
+        # re-citation: the A block's mandated maximum is 1110 um and our 1117.5
+        # exceeded it, so the die shrank, the clock moved to 20 MHz, and a
+        # non-default routing rule on three fanout-1 nets took max-slew and
+        # max-cap to zero at all nine corners.
+        "blocka_1110_ndr", "blockb_sdc", "blockc_sdc",
         # margin 45: what the template shipped for one day. Kept because they
         # are the tightest slew results we have and they bound what the last
         # stretch of margin costs in area.

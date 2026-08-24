@@ -1,0 +1,19 @@
+Total number of Clock Roots: 6.
+Total number of Buffers Inserted: 731.
+Total number of Clock Subnets: 731.
+Total number of Sinks: 5591.
+Cells used:
+  gf180mcu_fd_sc_mcu7t5v0__clkbuf_8: 691
+  gf180mcu_fd_sc_mcu7t5v0__clkbuf_16: 44
+Dummys used:
+  gf180mcu_fd_sc_mcu7t5v0__clkbuf_2: 20
+  gf180mcu_fd_sc_mcu7t5v0__clkbuf_4: 10
+  gf180mcu_fd_sc_mcu7t5v0__clkbuf_8: 17
+  gf180mcu_fd_sc_mcu7t5v0__clkinv_1: 1
+  gf180mcu_fd_sc_mcu7t5v0__clkinv_2: 19
+  gf180mcu_fd_sc_mcu7t5v0__clkinv_3: 1
+  gf180mcu_fd_sc_mcu7t5v0__clkinv_4: 6
+  gf180mcu_fd_sc_mcu7t5v0__clkinv_8: 6
+  gf180mcu_fd_sc_mcu7t5v0__inv_2: 18
+  gf180mcu_fd_sc_mcu7t5v0__inv_3: 20
+  gf180mcu_fd_sc_mcu7t5v0__inv_4: 25

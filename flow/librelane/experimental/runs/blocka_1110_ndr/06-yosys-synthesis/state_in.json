@@ -1,0 +1,9 @@
+{
+    "json_h": "/mnt/fda14e36-49c8-4508-a4b0-f37189565cd9/Base/Chipathon_SSCS_PICO_2026/AMCSOC/MOSAIC-SOC-PRIVATE/flow/librelane/experimental/runs/blocka_1110_ndr/05-yosys-jsonheader/mosaic_block_a.h.json",
+    "metrics": {
+        "design__lint_error__count": 0,
+        "design__lint_timing_construct__count": 0,
+        "design__lint_warning__count": 3773,
+        "design__inferred_latch__count": 0
+    }
+}

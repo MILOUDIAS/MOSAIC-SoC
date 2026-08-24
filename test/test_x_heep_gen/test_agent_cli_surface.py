@@ -47,7 +47,7 @@ BLOCKA_ARGS = [
     # soc.objectives.target_clock_mhz -- the typed surface has to be able to
     # reach every field of the config it claims to reproduce, or the claim
     # quietly narrows to "every field except the ones we cannot express".
-    "--target-clock-mhz", "25",
+    "--target-clock-mhz", "20",
 ]
 
 

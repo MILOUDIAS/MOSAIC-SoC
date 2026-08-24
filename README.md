@@ -64,6 +64,8 @@ It is built on EPFL's [X-HEEP](#built-on-x-heep) single-core MCU, extended into 
 32 KB SRAM, 2 KB boot ROM, UART/GPIO/timer/SPI, TDU, iDMA — targeting **1.249 mm²** on
 GF180MCU once the physical inputs listed in section 9 are available.
 
+> README is the practical user guide.
+
 > New to the project? Follow the **[hands-on tutorial](tutorial/README.md)** for a
 > small YAML → RTL → all-hart simulation example, followed by deterministic and
 > OpenCode Go harness walkthroughs with expected output at every stage.
@@ -735,7 +737,7 @@ env vars to the `tb/mosaic_soc` scripts.
   at nine corners — and the `PHYSICAL_BUNDLE` attestation path (a bound adapter and
   qualified 32-KiB SRAM bundle) for the chip-level flow.
 
-**Phase 2 — agentic harness (oh-my-soc): delivered**,
+\*\*Phase 2 — agentic harness (oh-my-soc): ,
 [`harness/README.md`](harness/README.md), [`demo/README.md`](demo/README.md)):
 
 - ✅ **First-class executable with an omp-style first run**: `./oh-my-soc <skill> <cmd>`
@@ -926,16 +928,16 @@ deterministic, pytest-guarded code — 672 tests at last count. The one-liner:
 **LLMs make the generator easier to drive and faster to extend; determinism
 makes what they produce trustworthy.**
 
-Full detail:[`harness/README.md`](harness/README.md),
+Full detail: [`harness/README.md`](harness/README.md),
 [`harness/EVALUATION.md`](harness/EVALUATION.md).
 
 ---
 
 ## 14. Extending the SoC
 
-**Add a new core** :
+**Add a new core** (summary):
 
-1. Study the core (bus, params, HDL).
+1. Study the core in `refs/IP_Cores_Catalog/<core>/` (bus, params, HDL).
 2. Write `hw/sci/<core>_sci.sv` presenting OBI 1.3 I+D ports.
 3. Add `util/xheep_gen/cpu/<core>.py` and register it in `AVAILABLE_CPUS`
    (`util/xheep_gen/cpu/cpu.py`).

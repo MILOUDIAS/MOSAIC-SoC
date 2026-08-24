@@ -95,42 +95,42 @@ soc:
   # ---- Design intent, not a result -------------------------------------------
   # The clock belongs here rather than in a hardening config. It was previously
   # absent, which meant changing the frequency required hand-editing a LibreLane
-  # config -- and that is how flow/librelane/experimental/config_blocka_25mhz.yaml
-  # came to exist. With this set, `physical-intent harden` derives CLOCK_PERIOD
-  # and there is one place to change it.
+  # config. With this set, `physical-intent harden` derives CLOCK_PERIOD and
+  # there is one place to change it.
   #
-  # 25 MHz is a REQUEST, and the key is named accordingly: STA decides whether it
-  # was met. It is not yet confirmed with the track lead / integration team
-  # (sscs-ose/sscs-chipathon-2026#134), which is the one item still blocking a
-  # tapeout tag. What is measured, on runs/blocka_25mhz:
+  # 20 MHz, and it is a MEASURED choice rather than a fallback. On the mandated
+  # 1110 um die (the A-block maximum; our 1117.5 exceeded it) both close with
+  # every check clean:
   #
-  #   setup WS +1.663 ns (TNS 0)      hold WS +0.0662 ns (TNS 0)
-  #   Magic/KLayout/routing DRC 0, LVS clean and unique, XOR 0, antenna 0
-  #   max-slew 0, max-cap 0, max-fanout 1
-  #   logic area 959,827 um2 on the same 1117.5 um die
-  #   functional post-route GLS: EXIT SUCCESS in 12,399 cycles
+  #   25 MHz  runs/blocka_1110_25_ndr   setup +0.089 ns   0.22% of the period
+  #   20 MHz  runs/blocka_1110_ndr      setup +6.066 ns  12.13% of the period
   #
-  # So it closes -- but +1.663 ns is 4.2% of a 40 ns period, and at 25 MHz the
-  # binding path moves from the half-cycle output path to spi_flash_sd_io to an
-  # internal register-to-register path. If the locked target comes back lower,
-  # change this number; the flow follows it.
+  # Both reach max-slew 0 and max-cap 0 at all nine corners, DRC/LVS/XOR/antenna
+  # /power-grid 0, and GLS EXIT SUCCESS. 20 MHz is chosen for the margin: edits
+  # made during this work moved setup by 0.245 ns and 0.693 ns, so 0.089 ns is
+  # inside the noise of the next iteration, and a wrapper rewrite to drive the
+  # padframe control terminals is still ahead of us.
+  #
+  # It remains a REQUEST, not a result: STA decides whether it was met.
   objectives:
-    target_clock_mhz: 25
-    # NOT set: die_um. Block A's 1117.5 um MPW slot IS a mandate and belongs
-    # here in principle. Setting it alone does not work, and the reason is worth
-    # recording because it looks like a bug and is not -- MEASURED:
+    target_clock_mhz: 20
+    # NOT set: die_um. 1110 um IS the mandate -- @d-m-bailey reported it as the
+    # A-block maximum, and our previous 1117.5 exceeded it. It belongs here in
+    # principle. Setting it alone does not work, and the reason is worth
+    # recording because it looks like a bug and is not -- MEASURED against the
+    # current calibration:
     #
-    #   objectives {clock 25}                      -> DIE_AREA 1118.59 um
-    #   objectives {clock 25, die_um 1117.5}       -> REFUSED, "design needs a
-    #       1118.6 um die at 81% utilisation but objectives.die_um mandates
-    #       1117.5; it does not fit the slot"
-    #   the same, with target_utilisation 0.835    -> DIE_AREA 1117.5 um, OK
+    #   objectives {clock 20}                       -> DIE_AREA 1114.53 um
+    #   objectives {clock 20, die_um 1110}          -> REFUSED, "design needs a
+    #       1114.5 um die at 81% utilisation but objectives.die_um mandates
+    #       1110.0; it does not fit the slot"
+    #   the same, with target_utilisation 0.823     -> DIE_AREA 1110 um, OK
     #
     # The refusal is correct behaviour and the model is not wrong; it is
-    # CONSERVATIVE. It sizes at ~81% utilisation while Block A actually achieves
-    # 85.15% (runs/blocka_25mhz), so the design fits a slot the model says it
-    # cannot. Honouring the mandate therefore needs a utilisation to be stated
-    # too, which run_signoff.sh passes as MOSAIC_HARDEN_UTIL.
+    # CONSERVATIVE. It sizes at ~81% while the design achieves 85.37%
+    # (runs/blocka_1110_ndr), so it fits a slot the model says it cannot.
+    # Honouring the mandate needs a utilisation stated too, which
+    # run_signoff.sh passes as MOSAIC_HARDEN_UTIL.
     #
     # Left out deliberately: adding die_um without also settling how utilisation
     # is expressed would make the documented derivation path REFUSE to emit

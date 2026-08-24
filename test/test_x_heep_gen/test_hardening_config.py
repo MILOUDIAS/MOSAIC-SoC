@@ -242,7 +242,7 @@ def test_the_derived_block_records_where_its_numbers_came_from():
     # calibration refresh. Asserting the tag rather than just "a citation
     # exists" is the point: if the calibration silently reverted to a pre-fix
     # run, the emitted config would cite it and this would catch it.
-    assert "blocka_sdc" in derived
+    assert "blocka_1110_ndr" in derived
     assert "do not hand-edit" in text
     assert "A request, not a result" in derived
 

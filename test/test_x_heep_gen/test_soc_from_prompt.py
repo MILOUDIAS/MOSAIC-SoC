@@ -264,11 +264,11 @@ BLOCK_A_PROMPT = (
     "one serv atlas rv32i without CSRs boot 0x40010000, "
     "no sram, 128 byte scratchpad, 1 kb boot rom, no DMA, no debug, no PLIC, "
     "no multicore timer, no gpio, no rv timer, no fast interrupts, "
-    "XIP from flash, uart only, TDU dynamic, at 25 MHz"
+    "XIP from flash, uart only, TDU dynamic, at 20 MHz"
 )
 
 # The same prompt without the clock, for the clock-grammar tests below.
-BLOCK_A_PROMPT_NO_CLOCK = BLOCK_A_PROMPT.replace(", at 25 MHz", "")
+BLOCK_A_PROMPT_NO_CLOCK = BLOCK_A_PROMPT.replace(", at 20 MHz", "")
 
 
 @pytest.mark.parametrize("phrasing", [
