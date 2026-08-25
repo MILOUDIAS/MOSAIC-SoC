@@ -762,8 +762,7 @@ env vars to the `tb/mosaic_soc` scripts.
   `PHYSICAL_BUNDLE` attestation path (a bound adapter and qualified 32-KiB SRAM bundle)
   for the chip-level flow.
 
-\*\*Phase 2 — agentic harness (oh-my-soc):,
-[`harness/README.md`](harness/README.md), [`demo/README.md`](demo/README.md)):
+**Phase 2 — agentic harness (oh-my-soc): delivered** ([`harness/README.md`](harness/README.md), [`demo/README.md`](demo/README.md)):
 
 - ✅ **First-class executable with an omp-style first run**: `./oh-my-soc <skill> <cmd>`
   (zero-install launcher, any cwd) or a PATH `oh-my-soc` via `pip install -e .`;
