@@ -19,7 +19,7 @@ project:
   lvs_config: "lvs_config.json"
 
 pins:
-  - name: vss
+  - name: VSS
     io_type: ground # note: due to a common ground connection, ground pads are generally not needed.
   - name: clk_i #clock
     io_type: input_schmitt
@@ -61,5 +61,5 @@ pins:
     io_type: bidirectional
   - name: status_o[6]
     io_type: bidirectional
-  - name: vdd
+  - name: VDD
     io_type: power
