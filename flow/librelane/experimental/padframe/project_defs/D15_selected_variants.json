@@ -1,0 +1,143 @@
+{
+  "project_size": {
+    "source_gds": "/Users/kanobailey/chipathon/2026/gds/D15/mosaic_block_a.gds",
+    "top_cell": "mosaic_block_a",
+    "layer": 0,
+    "datatype": 0,
+    "layout_dbu_microns": 0.001,
+    "rectangle_dbu": [
+      0,
+      0,
+      1110000,
+      1110000
+    ],
+    "width_microns": "1110",
+    "height_microns": "1110",
+    "top_cell_text": [
+      {
+        "text": "rst_ni",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_rx_i",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "boot_select_i",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "clk_i",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "execute_from_flash_i",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io[0]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io[1]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io[2]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io[3]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "status_o[0]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "status_o[1]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "status_o[2]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "status_o[3]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "status_o[4]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "status_o[5]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "status_o[6]",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o",
+        "layer": 42,
+        "datatype": 10
+      },
+      {
+        "text": "VDD",
+        "layer": 46,
+        "datatype": 10
+      },
+      {
+        "text": "VSS",
+        "layer": 46,
+        "datatype": 10
+      },
+      {
+        "text": "VDD",
+        "layer": 81,
+        "datatype": 10
+      },
+      {
+        "text": "VSS",
+        "layer": 81,
+        "datatype": 10
+      }
+    ]
+  },
+  "participant_pin_count": 22,
+  "selected_variants": [
+    "A"
+  ]
+}
