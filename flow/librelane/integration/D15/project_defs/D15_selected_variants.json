@@ -1,0 +1,868 @@
+{
+  "project_size": {
+    "source_gds": "/Users/kanobailey/chipathon/2026/gds/D15/mosaic_block_a.gds",
+    "top_cell": "mosaic_block_a",
+    "layer": 0,
+    "datatype": 0,
+    "layout_dbu_microns": 0.001,
+    "rectangle_dbu": [
+      0,
+      0,
+      1110000,
+      1110000
+    ],
+    "width_microns": "1110",
+    "height_microns": "1110",
+    "top_cell_text": [
+      {
+        "text": "status_o_CS[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_CS[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_CS[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_CS[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_CS[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_CS[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IE[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IE[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IE[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IE[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IE[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IN[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IN[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IN[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IN[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IN[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OE[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OE[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OE[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OE[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OE[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OUT[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OUT[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OUT[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OUT[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OUT[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV0[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV0[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV0[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV0[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV0[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV1[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV1[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV1[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV1[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV1[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PD[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PD[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PD[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PD[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PD[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PU[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PU[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PU[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PU[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PU[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_SL[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_SL[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_SL[4]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_SL[5]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_SL[6]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PD[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PU[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PU[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PU[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PU[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_SL[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_SL[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_SL[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_SL[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_CS[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_CS",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_IE",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_IN",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_OE",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_OUT",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IE[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IE[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_PDRV0",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_PDRV1",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_cs_o_SL",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_CS",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IN[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_IN[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_IE",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_IN",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_OE",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_OUT",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OE[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OE[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_PDRV0",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_PDRV1",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sck_o_SL",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_CS[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OUT[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_OUT[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_CS[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_CS[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_CS[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_IE[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_IE[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV0[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV0[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_IE[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_IE[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_IN[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_IN[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_IN[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV1[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PDRV1[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_IN[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_OE[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_OE[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_OE[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_OE[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PD[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PD[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_OUT[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_OUT[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_OUT[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_OUT[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PDRV0[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PU[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_PU[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PDRV0[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PDRV0[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PDRV0[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PDRV1[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PDRV1[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_SL[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_o_SL[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PDRV1[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PDRV1[3]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PD[0]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PD[1]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "spi_flash_sd_io_PD[2]",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_CS",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_IE",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_IN",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_OE",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_OUT",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_PDRV0",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_PDRV1",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "status_valid_o_SL",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_CS",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_IE",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_OE",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_OUT",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_PDRV0",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_PDRV1",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_SL",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "clk_i_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "execute_from_flash_i",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "execute_from_flash_i_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_rx_i",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_rx_i_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_rx_i_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "execute_from_flash_i_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "rst_ni",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "uart_tx_o_IN",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "rst_ni_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "rst_ni_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "boot_select_i",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "boot_select_i_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "boot_select_i_PU",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "clk_i",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "clk_i_PD",
+        "layer": 36,
+        "datatype": 10
+      },
+      {
+        "text": "VDD",
+        "layer": 46,
+        "datatype": 10
+      },
+      {
+        "text": "VSS",
+        "layer": 46,
+        "datatype": 10
+      },
+      {
+        "text": "VDD",
+        "layer": 81,
+        "datatype": 10
+      },
+      {
+        "text": "VSS",
+        "layer": 81,
+        "datatype": 10
+      }
+    ]
+  },
+  "participant_pin_count": 22,
+  "selected_variants": [
+    "A"
+  ]
+}

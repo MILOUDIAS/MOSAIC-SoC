@@ -1,0 +1,15 @@
+- cell: mosaic_block_a
+  inout: []
+  input:
+  - spi_flash_cs_o_IN
+  - spi_flash_sck_o_IN
+  - status_o_IN[0]
+  - status_o_IN[1]
+  - status_o_IN[2]
+  - status_o_IN[3]
+  - status_o_IN[4]
+  - status_o_IN[5]
+  - status_o_IN[6]
+  - status_valid_o_IN
+  - uart_tx_o_IN
+  output: []
