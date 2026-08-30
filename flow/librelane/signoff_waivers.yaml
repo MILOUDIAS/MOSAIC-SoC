@@ -60,40 +60,132 @@
 waivers:
   - metric: design__max_fanout_violation__count
     design: mosaic_block_a
-    accepted_max: 1
+    accepted_max: 5
     review_by: 2026-11-30
     recorded_by: MILOUDIAS
-    evidence: flow/librelane/experimental/runs/blocka_sdc
+    evidence: flow/librelane/experimental/runs/blocka_padframe_def
     justification: >
-      One net exceeds the maximum-fanout limit, consistently across all nine
-      corners, which indicates a structural fanout on a single high-load net
-      rather than a corner-dependent effect. The same single net has been
-      measured in every re-harden since, so it was never a corner or
-      parasitics artefact.
+      REWRITTEN 2026-08-27, second time. The count moved 4 -> 5 when the macro
+      was re-hardened against the integrator's padframe DEF, and the previous
+      record would have been WRONG rather than merely stale if the ceiling had
+      simply been raised: it said every violation is "one of those roots at
+      fanout 16", and the fifth is not.
 
-      Re-based 2026-08-16 onto runs/blocka_sdc, which is the configuration that
-      ships: post-PnR netlist byte-identical to blocka_slew32
-      (md5 6d8ab8db6b7613b65f3232d33ef96a68), max-slew now 0, and every hard
-      check zero -- Magic DRC, KLayout DRC, LVS, XOR, routing DRC, antenna,
-      disconnected pins. Setup closes at +20.90 ns on a 100 ns period, hold at
-      +0.066 ns. This is now the ONLY adverse metric on the design.
+      THE FIVE, identical at all nine corners (runs/blocka_padframe_def):
 
-      Accepted as an electrical quality limit rather than a functional or
-      connectivity failure. Unlike the retired slew waivers, this one cannot be
-      dismissed as the wrong corner's number: the GF180 libraries declare no
-      max_fanout of their own, so 10 is a rule this project chose and a net
-      exceeding it genuinely exceeds it. A single violating net is also small
-      enough to be characterised precisely before the next submission rather
-      than argued about now.
+        clkbuf_0_clk_i_regs/Z                            16   -6
+        clkbuf_0_...cpu_subsystem_i.cpu_0_0.clk_i/Z      16   -6
+        clkbuf_0_...cpu_subsystem_i.cpu_1_0.clk_i/Z      16   -6
+        clkbuf_0_...memory_subsystem_i.clk_cg/Z          16   -6
+        _52521_/Z                                        11
 
-      NOT waived by this record: a second violating net -- `accepted_max: 1`
-      means exactly one, so any increase fails the gate; any other design; and
-      any max-slew, max-capacitance, DRC, LVS, XOR or antenna finding, all of
-      which are currently zero on this run and have no waiver to fall back on.
+      FOUR are the CTS pattern the previous record described: OpenROAD builds a
+      16-way root buffer per gated-clock subtree, each at fanout 16 against
+      MAX_FANOUT_CONSTRAINT 10. The membership shifted rather than grew --
+      peripheral_subsystem_i.clk_cg left the list and clk_i_regs joined it --
+      which is placement moving under a fixed pin assignment, not a new defect.
 
-# ---- ON THE TAPED-OUT GDS ----------------------------------------------------
+      THE FIFTH IS A DIFFERENT PHENOMENON and is recorded as such. `_52521_` is
+      a buf_2 whose Z pin drives net _24458_ at fanout 11. Traced in the
+      post-route netlist: it carries no clock (zero CLK/CP pins on the net), its
+      eleven loads are ten buf_1 plus one antenna diode, and following the tree
+      through reaches 100 nand3_1.A3 pins. Its source is a nand2_2, so this is
+      combinational logic broadcast to 100 sinks, which the resizer buffered
+      into a tree. The root of that tree sits one over the limit at 11.
+
+      ITS MARGIN, measured on the signed-off database at ss_125C_4v50 rather
+      than inferred from the zero counts (asked for in re-review):
+
+        slew          0.494 ns   against the 4.0 ns PnR constraint, and
+                                 against a 7.0 ns per-pin library limit at
+                                 this corner: roughly 8x headroom
+        capacitance   0.03 pF    total, of which WIRE capacitance is 0.00 --
+                                 the load is eleven buffer inputs in a
+                                 compact cluster, not a long net
+        loads         11         ten buf_1 plus one antenna diode
+
+      For scale, the design's worst slew pin at this corner is _44498_/ZN at
+      2.97 ns against 4.00 (MET), so _52521_/Z is nowhere near the margin that
+      matters. It appears in no corner's violator_list.rpt.
+
+      WHY BOTH ARE ACCEPTED, on the same argument as before. MAX_FANOUT_CONSTRAINT
+      10 is a rule this project chose; the GF180 standard-cell libraries declare
+      no max_fanout and no default_max_fanout in any corner file, so no library
+      limit is being exceeded. Fanout is a proxy for load, and what it proxies
+      for is measured on this exact run and passes: max-slew 0 and
+      max-capacitance 0 at ALL NINE corners, so none of the five appears in
+      either violator list. Setup closes at +2.670 ns and hold at +0.069 ns with
+      TNS 0. Post-route GLS on this netlist reaches EXIT SUCCESS in 12,399
+      cycles, through a testbench that models the padring and reads the pad
+      control values back out of the gates.
+
+      WHY NOT FIXED. The levers were tried and measured on this design and every
+      blanket one made it worse: CTS_MAX_CAP 0.15 took max-cap 27 -> 35 by
+      concentrating load on these same gated-clock roots; bufz_8 on the QSPI
+      pads took max-slew 591 -> 785; repair margins slew 45 + cap 40 took slew
+      6 -> 43 and cap 2 -> 24 by inserting 1283 buffers, raising utilisation
+      1.35 points and wirelength 6%. CTS_SINK_CLUSTERING_SIZE governs leaf
+      clusters, not roots. None of these reach _52521_ either, which is a
+      resizer artifact rather than a CTS one.
+
+      RAISING THE CONSTRAINT ITSELF WAS TRIED, and it is the lever @tai08
+      recommended in re-review: relax MAX_FANOUT_CONSTRAINT for clock nets
+      rather than waive them. Measured as a single variable
+      (runs/blocka_fanout16, 10 -> 16, CTS_SINK_CLUSTERING_SIZE held at 10,
+      resolved configs differing by exactly one line):
+
+        max-fanout violations      5  ->  12
+        worst fanout              16  ->  21
+        buffer cell area      31,137  ->  23,594 um2   (-24%)
+        instances             73,158  ->  72,020       (-1.6%)
+        wirelength         1,985,538  ->  1,920,673    (-3.3%)
+        slew / cap / DRC / LVS / antenna    0, unchanged
+        setup / hold WNS   +2.670/+0.069 -> +2.747/+0.071
+
+      It made the count WORSE, and the violator identities say why. At 10 the
+      five are ROOT buffers, clkbuf_0_*, at fanout 16. At 16 they are
+      clkbuf_3_* and clkbuf_4_*, three and four levels DOWN the tree, carrying
+      17 to 21 sinks each. Telling CTS that 16 sinks per buffer is acceptable
+      buys a shallower tree with 24% less buffer area, and that tree then
+      overshoots its own relaxed limit in twelve places.
+
+      So the constraint is doing work rather than merely reporting. This is the
+      same result the MAX_TRANSITION experiment produced, now measured directly
+      on the constraint in question instead of argued by analogy.
+
+      NOT ARGUED HERE: that blocka_fanout16 is a bad design. It is clean on
+      every other check and marginally better on timing and wirelength. The
+      claim is narrower. Five root buffers at a known fanout with measured slew
+      and capacitance margin is a smaller and better understood thing to accept
+      than twelve mid-tree buffers at up to 21.
+
+      NOT waived by this record: a sixth violating net, since accepted_max is a
+      ceiling; any of these five appearing in the max-slew or max-capacitance
+      lists, which is the condition the whole argument rests on; any other
+      design; and any DRC, LVS, XOR, antenna, power-grid or timing finding, all
+      of which are zero on runs/blocka_padframe_def and have no waiver behind
+      them.
+
+      SUPERSEDED EVIDENCE. The previous record cited runs/blocka_1110_ndr at
+      accepted_max 4. That run remains valid for what it measured, but it is the
+      22-port macro, not the 167-terminal one being submitted, so it no longer
+      describes the delivered design.
+
+# ---- ON THE SUBMITTED DIE ----------------------------------------------------
+# THE SUBMITTED DESIGN IS NOW 1110 x 1110 um AT 20 MHz (runs/blocka_1110_ndr).
+# 1110 is a MANDATE: @d-m-bailey reported that the A block's maximum is
+# 1110 x 1110 and that our 1117.5 um PR boundary exceeded it, which is why the
+# padframe generator fell back to the next valid block size. Everything above is
+# measured on the smaller die.
+#
+# 20 MHz rather than 25 is a measured choice, not a retreat. On this die 25 MHz
+# also closes with every check clean (runs/blocka_1110_25_ndr) but at +0.089 ns
+# of setup, 0.22% of the period. For scale, changes made during this work moved
+# setup by 0.245 ns and 0.693 ns, and a wrapper rewrite to drive the pad control
+# terminals is still ahead. 20 MHz holds +6.066 ns, 12.13%.
+#
 # The GDS that was actually taped out (runs/blocka_signoff) predates every flow
-# fix in this file's history. Checked against the CURRENT configuration it
+# fix in this file's history, AND is on the oversized 1117.5 um die. Checked against the CURRENT configuration it
 # would report 591 max-slew violations -- against the old blanket 4.0 ns limit,
 # so most of those were the same non-defects retired above, but it also predates
 # the post-GRT repair fix and the antenna iteration fix, which were real. It is
