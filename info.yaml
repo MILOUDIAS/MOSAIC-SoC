@@ -17,11 +17,11 @@ project:
   discord: "MILOUDIAS, kewenlee, yassinehk"
   description: "Config-to-GDSII generator for heterogeneous multi-core RISC-V SoCs, driven by an LLM agent, targeting the GF180MCU open PDK"
   lvs_config: "lvs_config.json"
-  gf_def_ready: true            # data ready for def generation with global foundries' pad frame
-  ws_def_ready: true            # data ready for def generation with wafer space pad frame
-  drc_ready: true               # data ready for integration and DRC
-  lvs_ready: true               # data ready for integrated LVS
-
+  gf_def_ready: true # data ready for def generation with global foundries' pad frame
+  ws_def_ready: true # data ready for def generation with wafer space pad frame
+  drc_ready: true # data ready for integration and DRC
+  lvs_ready: true # data ready for integrated LVS
+  export_control: "docs/Export_Control_GF_MOSAIC_BlockA.docx" # Required export control document
 # There are 7 i/o pin types and the associated connections from the user area to the i/o pad cell
 # all control signals must be connected
 # ground:
